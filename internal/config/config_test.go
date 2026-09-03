@@ -76,6 +76,33 @@ func TestLoadInvalid(t *testing.T) {
 	}
 }
 
+func TestTempThresholdValidation(t *testing.T) {
+	cases := []struct {
+		name       string
+		warn, crit float64
+		wantWarn   float64
+		wantCrit   float64
+	}{
+		{"defaults kept", 60, 80, 60, 80},
+		{"zero warn falls back", 0, 80, 60, 80},
+		{"crit below warn falls back", 70, 65, 70, 80},
+		{"custom values kept", 55, 75, 55, 75},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := Default()
+			cfg.Thresholds.TempWarn, cfg.Thresholds.TempCrit = tc.warn, tc.crit
+			cfg.normalize()
+			if cfg.Thresholds.TempWarn != tc.wantWarn {
+				t.Errorf("temp_warn: got %v, want %v", cfg.Thresholds.TempWarn, tc.wantWarn)
+			}
+			if cfg.Thresholds.TempCrit != tc.wantCrit {
+				t.Errorf("temp_crit: got %v, want %v", cfg.Thresholds.TempCrit, tc.wantCrit)
+			}
+		})
+	}
+}
+
 func TestKeysValidation(t *testing.T) {
 	cases := []struct {
 		name       string

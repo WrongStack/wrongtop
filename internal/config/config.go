@@ -51,10 +51,12 @@ type Modules struct {
 // Thresholds controls when metric values change from normal to warning to
 // critical colors.
 type Thresholds struct {
-	CPUWarn float64 `yaml:"cpu_warn"`
-	CPUCrit float64 `yaml:"cpu_crit"`
-	MemWarn float64 `yaml:"mem_warn"`
-	MemCrit float64 `yaml:"mem_crit"`
+	CPUWarn  float64 `yaml:"cpu_warn"`
+	CPUCrit  float64 `yaml:"cpu_crit"`
+	MemWarn  float64 `yaml:"mem_warn"`
+	MemCrit  float64 `yaml:"mem_crit"`
+	TempWarn float64 `yaml:"temp_warn"` // °C
+	TempCrit float64 `yaml:"temp_crit"` // °C
 }
 
 // Keys overrides default key bindings.
@@ -72,6 +74,7 @@ func Default() *Config {
 		Thresholds: Thresholds{
 			CPUWarn: 70, CPUCrit: 90,
 			MemWarn: 80, MemCrit: 95,
+			TempWarn: 60, TempCrit: 80,
 		},
 		Keys: Keys{Kill: "k", Filter: "/"},
 	}
@@ -92,6 +95,8 @@ thresholds:              # percent → warn/critical coloring
   cpu_crit: 90
   mem_warn: 80
   mem_crit: 95
+  temp_warn: 60           # CPU temperature °C (shown when the platform reports it)
+  temp_crit: 80
 
 keys:                    # overrides (processes tab)
   kill: k                # terminate
@@ -145,6 +150,12 @@ func (c *Config) normalize() {
 	}
 	if c.Theme == "" {
 		c.Theme = "gruvbox-dark"
+	}
+	if c.Thresholds.TempWarn <= 0 {
+		c.Thresholds.TempWarn = 60
+	}
+	if c.Thresholds.TempCrit <= c.Thresholds.TempWarn {
+		c.Thresholds.TempCrit = 80
 	}
 	if !validKeyOverride(c.Keys.Kill) {
 		c.Keys.Kill = "k"

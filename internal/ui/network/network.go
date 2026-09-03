@@ -31,6 +31,7 @@ type Model struct {
 // New builds the network tab.
 func New(cfg *config.Config, th *theme.Theme) *Model {
 	t := table.New(table.WithFocused(true), table.WithWidth(100), table.WithHeight(20))
+	t.SetColumns(columns(100)) // sane defaults until SetSize arrives
 	return &Model{cfg: cfg, th: th, table: t}
 }
 

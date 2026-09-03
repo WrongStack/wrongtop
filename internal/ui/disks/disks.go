@@ -34,6 +34,8 @@ type Model struct {
 func New(cfg *config.Config, th *theme.Theme) *Model {
 	t := table.New(table.WithFocused(true), table.WithWidth(100), table.WithHeight(12))
 	io := table.New(table.WithFocused(false), table.WithWidth(100), table.WithHeight(8))
+	t.SetColumns(usageColumns(100)) // sane defaults until SetSize arrives
+	io.SetColumns(ioColumns(100))
 	return &Model{cfg: cfg, th: th, table: t, io: io}
 }
 
