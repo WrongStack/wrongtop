@@ -3,21 +3,26 @@
 package app
 
 import (
+	"context"
 	"strings"
+	"time"
 
 	"charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/ersinkoc/wrongtop/internal/collector"
 	"github.com/ersinkoc/wrongtop/internal/config"
 	"github.com/ersinkoc/wrongtop/internal/theme"
 	"github.com/ersinkoc/wrongtop/internal/ui"
+	"github.com/ersinkoc/wrongtop/internal/ui/dashboard"
 )
 
 // Model is the bubbletea root model.
 type Model struct {
-	cfg     *config.Config
-	theme   *theme.Theme
-	version string
+	cfg       *config.Config
+	theme     *theme.Theme
+	version   string
+	collector *collector.Collector
 
 	width  int
 	height int
@@ -29,11 +34,12 @@ type Model struct {
 func New(cfg *config.Config, version string) *Model {
 	th := theme.ByName(cfg.Theme)
 	m := &Model{
-		cfg:     cfg,
-		theme:   th,
-		version: version,
+		cfg:       cfg,
+		theme:     th,
+		version:   version,
+		collector: &collector.Collector{},
 		tabs: []ui.Tab{
-			ui.NewPlaceholder("DASHBOARD", "cpu · memory · host metrics — phase 2"),
+			dashboard.New(cfg, th),
 			ui.NewPlaceholder("PROCESSES", "process table, sort / filter / kill — phase 3"),
 			ui.NewPlaceholder("DOCKER", "containers, stats and actions — phase 5"),
 			ui.NewPlaceholder("DISKS", "filesystems and I/O rates — phase 4"),
@@ -49,8 +55,25 @@ func Run(cfg *config.Config, version string) error {
 	return err
 }
 
+// tickMsg fires on every refresh interval.
+type tickMsg time.Time
+
 // Init implements tea.Model.
-func (m *Model) Init() tea.Cmd { return nil }
+func (m *Model) Init() tea.Cmd {
+	return tea.Batch(m.tickCmd(), m.collectCmd())
+}
+
+func (m *Model) tickCmd() tea.Cmd {
+	return tea.Every(m.cfg.Refresh.D(), func(t time.Time) tea.Msg { return tickMsg(t) })
+}
+
+func (m *Model) collectCmd() tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		return collector.SnapshotMsg{Snap: m.collector.Collect(ctx)}
+	}
+}
 
 // Update implements tea.Model.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -61,6 +84,18 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			t.SetSize(msg.Width, msg.Height-2) // tab bar + status bar
 		}
 		return m, nil
+
+	case tickMsg:
+		return m, tea.Batch(m.tickCmd(), m.collectCmd())
+
+	case collector.SnapshotMsg:
+		var cmds []tea.Cmd
+		for _, t := range m.tabs { // hidden tabs keep their history buffers warm
+			if cmd := t.Update(msg); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+		return m, tea.Batch(cmds...)
 
 	case tea.KeyPressMsg:
 		if cmd, handled := m.globalKey(msg); handled {

@@ -99,6 +99,7 @@ type Styles struct {
 	Crit         lipgloss.Style
 	Muted        lipgloss.Style
 	Border       lipgloss.Style
+	BorderChar   lipgloss.Style
 	BorderTitle  lipgloss.Style
 	Placeholder  lipgloss.Style
 	PlaceholderN lipgloss.Style
@@ -146,6 +147,8 @@ func New(p Palette) *Theme {
 		Border: lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(c(p.Blue)),
+		BorderChar: lipgloss.NewStyle().
+			Foreground(c(p.Blue)),
 		BorderTitle: lipgloss.NewStyle().
 			Foreground(c(p.Blue)).
 			Bold(true),
