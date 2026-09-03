@@ -15,6 +15,7 @@ import (
 	"github.com/ersinkoc/wrongtop/internal/theme"
 	"github.com/ersinkoc/wrongtop/internal/ui"
 	"github.com/ersinkoc/wrongtop/internal/ui/dashboard"
+	"github.com/ersinkoc/wrongtop/internal/ui/processes"
 )
 
 // Model is the bubbletea root model.
@@ -40,7 +41,7 @@ func New(cfg *config.Config, version string) *Model {
 		collector: &collector.Collector{},
 		tabs: []ui.Tab{
 			dashboard.New(cfg, th),
-			ui.NewPlaceholder("PROCESSES", "process table, sort / filter / kill — phase 3"),
+			processes.New(cfg, th),
 			ui.NewPlaceholder("DOCKER", "containers, stats and actions — phase 5"),
 			ui.NewPlaceholder("DISKS", "filesystems and I/O rates — phase 4"),
 			ui.NewPlaceholder("NETWORK", "per-interface traffic — phase 4"),

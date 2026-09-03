@@ -12,10 +12,25 @@ type SnapshotMsg struct {
 
 // Snapshot is one sample of everything wrongtop shows.
 type Snapshot struct {
-	Time time.Time `json:"time"`
-	Host Host      `json:"host"`
-	CPU  CPU       `json:"cpu"`
-	Mem  Mem       `json:"mem"`
+	Time  time.Time `json:"time"`
+	Host  Host      `json:"host"`
+	CPU   CPU       `json:"cpu"`
+	Mem   Mem       `json:"mem"`
+	Procs []Proc    `json:"procs,omitempty"`
+}
+
+// Proc is one process sample. CPU is an interval delta (htop-style) and
+// can exceed 100 for multi-threaded processes.
+type Proc struct {
+	PID     int32   `json:"pid"`
+	PPID    int32   `json:"ppid"`
+	Name    string  `json:"name"`
+	CPU     float64 `json:"cpu"`
+	Mem     float64 `json:"mem"` // percent of physical memory
+	RSS     uint64  `json:"rss"`
+	User    string  `json:"user"`
+	State   string  `json:"state"` // single letter: R S Z T I ...
+	Threads int32   `json:"threads"`
 }
 
 // Host holds slow-changing system identity plus volatile load figures.
