@@ -366,12 +366,15 @@ func (c *Collector) collectDiskIO(ctx context.Context, elapsed float64) []DiskIO
 			continue
 		}
 		busyMs := max(0, int64(cur.IoTime)-int64(p.IoTime))
+		// kernel counters restart from zero when a device reinitialises;
+		// subtract as int64 so the reset clamps to 0 instead of wrapping
+		// into a ~2^64 spike
 		d := DiskIO{
 			Name:        name,
-			ReadBytes:   max(0, float64(cur.ReadBytes-p.ReadBytes)/elapsed),
-			WriteBytes:  max(0, float64(cur.WriteBytes-p.WriteBytes)/elapsed),
-			ReadIOPS:    max(0, float64(cur.ReadCount-p.ReadCount)/elapsed),
-			WriteIOPS:   max(0, float64(cur.WriteCount-p.WriteCount)/elapsed),
+			ReadBytes:   max(0, float64(int64(cur.ReadBytes)-int64(p.ReadBytes))/elapsed),
+			WriteBytes:  max(0, float64(int64(cur.WriteBytes)-int64(p.WriteBytes))/elapsed),
+			ReadIOPS:    max(0, float64(int64(cur.ReadCount)-int64(p.ReadCount))/elapsed),
+			WriteIOPS:   max(0, float64(int64(cur.WriteCount)-int64(p.WriteCount))/elapsed),
 			BusyPercent: min(100, float64(busyMs)/1000/elapsed*100),
 		}
 		if d.ReadBytes > 0 || d.WriteBytes > 0 || d.ReadIOPS > 0 || d.WriteIOPS > 0 {
@@ -405,12 +408,15 @@ func (c *Collector) collectNet(ctx context.Context, elapsed float64) []NetIface 
 		if !ok {
 			continue
 		}
+		// kernel counters restart from zero when an interface bounces;
+		// subtract as int64 so the reset clamps to 0 instead of wrapping
+		// into a ~2^64 spike
 		n := NetIface{
 			Name:          cur.Name,
-			RxRate:        max(0, float64(cur.BytesRecv-p.BytesRecv)/elapsed),
-			TxRate:        max(0, float64(cur.BytesSent-p.BytesSent)/elapsed),
-			RxRatePackets: max(0, float64(cur.PacketsRecv-p.PacketsRecv)/elapsed),
-			TxRatePackets: max(0, float64(cur.PacketsSent-p.PacketsSent)/elapsed),
+			RxRate:        max(0, float64(int64(cur.BytesRecv)-int64(p.BytesRecv))/elapsed),
+			TxRate:        max(0, float64(int64(cur.BytesSent)-int64(p.BytesSent))/elapsed),
+			RxRatePackets: max(0, float64(int64(cur.PacketsRecv)-int64(p.PacketsRecv))/elapsed),
+			TxRatePackets: max(0, float64(int64(cur.PacketsSent)-int64(p.PacketsSent))/elapsed),
 			RxTotal:       cur.BytesRecv,
 			TxTotal:       cur.BytesSent,
 		}
