@@ -1,7 +1,11 @@
+# build artifacts
+/wrongtop
+/dist/
+
+# tool state
+.mimosa/
+.zcode/
 .wrongstack/
+!/.wrongstack/project.json
 !/.wrongstack/
 /.wrongstack/*
-!/.wrongstack/project.json
-.zcode/
-.mimosa/dist/
-wrongtop
