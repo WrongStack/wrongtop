@@ -15,6 +15,8 @@ import (
 	"github.com/ersinkoc/wrongtop/internal/theme"
 	"github.com/ersinkoc/wrongtop/internal/ui"
 	"github.com/ersinkoc/wrongtop/internal/ui/dashboard"
+	"github.com/ersinkoc/wrongtop/internal/ui/disks"
+	"github.com/ersinkoc/wrongtop/internal/ui/network"
 	"github.com/ersinkoc/wrongtop/internal/ui/processes"
 )
 
@@ -43,8 +45,8 @@ func New(cfg *config.Config, version string) *Model {
 			dashboard.New(cfg, th),
 			processes.New(cfg, th),
 			ui.NewPlaceholder("DOCKER", "containers, stats and actions — phase 5"),
-			ui.NewPlaceholder("DISKS", "filesystems and I/O rates — phase 4"),
-			ui.NewPlaceholder("NETWORK", "per-interface traffic — phase 4"),
+			disks.New(cfg, th),
+			network.New(cfg, th),
 		},
 	}
 	return m

@@ -9,9 +9,11 @@ import (
 	"time"
 
 	"github.com/shirou/gopsutil/v4/cpu"
+	"github.com/shirou/gopsutil/v4/disk"
 	"github.com/shirou/gopsutil/v4/host"
 	"github.com/shirou/gopsutil/v4/load"
 	"github.com/shirou/gopsutil/v4/mem"
+	"github.com/shirou/gopsutil/v4/net"
 	"github.com/shirou/gopsutil/v4/process"
 )
 
@@ -30,21 +32,36 @@ type Collector struct {
 	once sync.Once
 	id   hostIdentity
 
-	mu       sync.Mutex
-	lastCPU  map[int32]float64   // pid -> user+system CPU seconds
-	lastPoll time.Time           // wall clock of previous process poll
-	users    map[int32]string    // uid -> username cache
+	mu         sync.Mutex
+	lastCPU    map[int32]float64 // pid -> user+system CPU seconds
+	lastDiskIO map[string]disk.IOCountersStat
+	lastNet    map[string]net.IOCountersStat
+	users      map[int32]string // uid -> username cache
+	pollClock  time.Time        // previous Collect wall clock
 }
 
 // Collect gathers one snapshot. Sections that fail are left zeroed;
-// collection never fails wholesale.
+// collection never fails wholesale. Rate-based metrics are deltas over
+// the interval between Collect calls.
 func (c *Collector) Collect(ctx context.Context) Snapshot {
+	c.mu.Lock()
+	now := time.Now()
+	elapsed := now.Sub(c.pollClock).Seconds()
+	c.pollClock = now
+	c.mu.Unlock()
+	if elapsed <= 0 || elapsed > 30 { // first run or resumed suspension
+		elapsed = 0
+	}
+
 	return Snapshot{
-		Time:  time.Now(),
-		Host:  c.collectHost(ctx),
-		CPU:   collectCPU(ctx),
-		Mem:   collectMem(ctx),
-		Procs: c.collectProcs(ctx),
+		Time:    now,
+		Host:    c.collectHost(ctx),
+		CPU:     collectCPU(ctx),
+		Mem:     collectMem(ctx),
+		Procs:   c.collectProcs(ctx, elapsed),
+		Disks:   c.collectDisks(ctx),
+		DiskIOs: c.collectDiskIO(ctx, elapsed),
+		Nets:    c.collectNet(ctx, elapsed),
 	}
 }
 
@@ -111,8 +128,8 @@ func collectMem(ctx context.Context) Mem {
 }
 
 // collectProcs lists all processes. Per-process CPU is diffed against the
-// previous poll, matching the refresh cadence; the first poll reports 0.
-func (c *Collector) collectProcs(ctx context.Context) []Proc {
+// previous poll; the first poll reports 0.
+func (c *Collector) collectProcs(ctx context.Context, elapsed float64) []Proc {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -121,7 +138,6 @@ func (c *Collector) collectProcs(ctx context.Context) []Proc {
 		c.users = make(map[int32]string)
 	}
 
-	now := time.Now()
 	procs, err := process.ProcessesWithContext(ctx)
 	if err != nil {
 		return nil
@@ -132,7 +148,6 @@ func (c *Collector) collectProcs(ctx context.Context) []Proc {
 	sys, _ := readProcSys()
 
 	next := make(map[int32]float64, len(procs))
-	elapsed := now.Sub(c.lastPoll).Seconds()
 	out := make([]Proc, 0, len(procs))
 	for _, p := range procs {
 		var pr Proc
@@ -172,7 +187,6 @@ func (c *Collector) collectProcs(ctx context.Context) []Proc {
 	}
 
 	c.lastCPU = next
-	c.lastPoll = now
 	return out
 }
 
@@ -188,6 +202,124 @@ func (c *Collector) userFor(uid int32) string {
 	}
 	c.users[uid] = name
 	return name
+}
+
+// pseudoFSTypes are virtual filesystems that carry no useful usage data.
+var pseudoFSTypes = map[string]bool{
+	"autofs":    true,
+	"devfs":     true,
+	"devtmpfs":  true,
+	"procfs":    true,
+	"linprocfs": true,
+	"fdescfs":   true,
+	"efivarfs":  true,
+	"swap":      true,
+}
+
+func (c *Collector) collectDisks(ctx context.Context) []Disk {
+	parts, err := disk.PartitionsWithContext(ctx, false)
+	if err != nil {
+		return nil
+	}
+	seen := make(map[string]bool, len(parts))
+	out := make([]Disk, 0, len(parts))
+	for _, p := range parts {
+		if pseudoFSTypes[p.Fstype] || seen[p.Mountpoint] {
+			continue
+		}
+		u, err := disk.UsageWithContext(ctx, p.Mountpoint)
+		if err != nil || u.Total == 0 {
+			continue
+		}
+		seen[p.Mountpoint] = true
+		out = append(out, Disk{
+			Device:     p.Device,
+			Mountpoint: p.Mountpoint,
+			FSType:     p.Fstype,
+			Total:      u.Total,
+			Used:       u.Used,
+			Free:       u.Free,
+			Percent:    u.UsedPercent,
+		})
+	}
+	return out
+}
+
+// collectDiskIO reports per-device read/write rates from counter deltas.
+func (c *Collector) collectDiskIO(ctx context.Context, elapsed float64) []DiskIO {
+	counters, err := disk.IOCountersWithContext(ctx)
+	if err != nil {
+		return nil
+	}
+
+	c.mu.Lock()
+	prev := c.lastDiskIO
+	c.lastDiskIO = counters
+	c.mu.Unlock()
+
+	if elapsed <= 0 || prev == nil {
+		return nil
+	}
+	out := make([]DiskIO, 0, len(counters))
+	for name, cur := range counters {
+		p, ok := prev[name]
+		if !ok {
+			continue
+		}
+		busyMs := max(0, int64(cur.IoTime)-int64(p.IoTime))
+		d := DiskIO{
+			Name:        name,
+			ReadBytes:   max(0, float64(cur.ReadBytes-p.ReadBytes)/elapsed),
+			WriteBytes:  max(0, float64(cur.WriteBytes-p.WriteBytes)/elapsed),
+			ReadIOPS:    max(0, float64(cur.ReadCount-p.ReadCount)/elapsed),
+			WriteIOPS:   max(0, float64(cur.WriteCount-p.WriteCount)/elapsed),
+			BusyPercent: min(100, float64(busyMs)/1000/elapsed*100),
+		}
+		if d.ReadBytes > 0 || d.WriteBytes > 0 || d.ReadIOPS > 0 || d.WriteIOPS > 0 {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// collectNet reports per-interface traffic rates from counter deltas.
+func (c *Collector) collectNet(ctx context.Context, elapsed float64) []NetIface {
+	counters, err := net.IOCountersWithContext(ctx, true)
+	if err != nil {
+		return nil
+	}
+
+	c.mu.Lock()
+	prev := c.lastNet
+	c.lastNet = make(map[string]net.IOCountersStat, len(counters))
+	for _, n := range counters {
+		c.lastNet[n.Name] = n
+	}
+	c.mu.Unlock()
+
+	if elapsed <= 0 || prev == nil {
+		return nil
+	}
+	out := make([]NetIface, 0, len(counters))
+	for _, cur := range counters {
+		p, ok := prev[cur.Name]
+		if !ok {
+			continue
+		}
+		n := NetIface{
+			Name:          cur.Name,
+			RxRate:        max(0, float64(cur.BytesRecv-p.BytesRecv)/elapsed),
+			TxRate:        max(0, float64(cur.BytesSent-p.BytesSent)/elapsed),
+			RxRatePackets: max(0, float64(cur.PacketsRecv-p.PacketsRecv)/elapsed),
+			TxRatePackets: max(0, float64(cur.PacketsSent-p.PacketsSent)/elapsed),
+			RxTotal:       cur.BytesRecv,
+			TxTotal:       cur.BytesSent,
+		}
+		if n.RxTotal > 0 || n.TxTotal > 0 || n.RxRate > 0 || n.TxRate > 0 {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 // abbrevState reduces gopsutil status strings to a single htop-style letter.

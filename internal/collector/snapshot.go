@@ -12,11 +12,14 @@ type SnapshotMsg struct {
 
 // Snapshot is one sample of everything wrongtop shows.
 type Snapshot struct {
-	Time  time.Time `json:"time"`
-	Host  Host      `json:"host"`
-	CPU   CPU       `json:"cpu"`
-	Mem   Mem       `json:"mem"`
-	Procs []Proc    `json:"procs,omitempty"`
+	Time    time.Time  `json:"time"`
+	Host    Host       `json:"host"`
+	CPU     CPU        `json:"cpu"`
+	Mem     Mem        `json:"mem"`
+	Procs   []Proc     `json:"procs,omitempty"`
+	Disks   []Disk     `json:"disks,omitempty"`
+	DiskIOs []DiskIO   `json:"disk_ios,omitempty"`
+	Nets    []NetIface `json:"nets,omitempty"`
 }
 
 // Proc is one process sample. CPU is an interval delta (htop-style) and
@@ -61,5 +64,37 @@ type Mem struct {
 	SwapTotal   uint64  `json:"swap_total"`
 	SwapUsed    uint64  `json:"swap_used"`
 	SwapPercent float64 `json:"swap_percent"`
+}
+
+// Disk is one mounted filesystem.
+type Disk struct {
+	Device     string  `json:"device"`
+	Mountpoint string  `json:"mountpoint"`
+	FSType     string  `json:"fs_type"`
+	Total      uint64  `json:"total"`
+	Used       uint64  `json:"used"`
+	Free       uint64  `json:"free"`
+	Percent    float64 `json:"percent"`
+}
+
+// DiskIO is a per-device I/O rate sample (interval delta).
+type DiskIO struct {
+	Name        string  `json:"name"`
+	ReadBytes   float64 `json:"read_bytes_per_s"`
+	WriteBytes  float64 `json:"write_bytes_per_s"`
+	ReadIOPS    float64 `json:"read_iops"`
+	WriteIOPS   float64 `json:"write_iops"`
+	BusyPercent float64 `json:"busy_percent"`
+}
+
+// NetIface is a per-interface traffic sample (rates are interval deltas).
+type NetIface struct {
+	Name   string  `json:"name"`
+	RxRate float64 `json:"rx_rate"` // bytes/s
+	TxRate float64 `json:"tx_rate"` // bytes/s
+	RxRatePackets float64 `json:"rx_pps"`
+	TxRatePackets float64 `json:"tx_pps"`
+	RxTotal uint64  `json:"rx_total"`
+	TxTotal uint64  `json:"tx_total"`
 }
 

@@ -20,6 +20,20 @@ func Bytes(n uint64) string {
 	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
 }
 
+// Rate renders a bytes-per-second figure in decimal units, e.g. "12.4 MB/s".
+func Rate(bps float64) string {
+	const unit = 1000
+	if bps < unit {
+		return fmt.Sprintf("%.0f B/s", bps)
+	}
+	div, exp := float64(unit), 0
+	for n := bps / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cb/s", bps/div, "KMGTPE"[exp])
+}
+
 // Uptime renders a duration compactly, e.g. "3d 4h", "12m" or "45s".
 func Uptime(d time.Duration) string {
 	switch {
