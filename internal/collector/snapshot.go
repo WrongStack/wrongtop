@@ -16,6 +16,8 @@ type Snapshot struct {
 	Host    Host       `json:"host"`
 	CPU     CPU        `json:"cpu"`
 	Mem     Mem        `json:"mem"`
+	Sensors []Sensor   `json:"sensors,omitempty"`
+	Battery *Battery   `json:"battery,omitempty"`
 	Procs   []Proc     `json:"procs,omitempty"`
 	Disks   []Disk     `json:"disks,omitempty"`
 	DiskIOs []DiskIO   `json:"disk_ios,omitempty"`
@@ -49,10 +51,25 @@ type Host struct {
 }
 
 // CPU is one CPU sample. Percent is the aggregate across all logical
-// cores; Cores holds one percentage per logical core.
+// cores; Cores holds one percentage per logical core. FreqMHz is the
+// current average clock and is 0 when the platform does not report it.
 type CPU struct {
 	Percent float64   `json:"percent"`
+	FreqMHz float64   `json:"freq_mhz,omitempty"`
 	Cores   []float64 `json:"cores"`
+}
+
+// Sensor is one CPU-relevant temperature reading.
+type Sensor struct {
+	Name  string  `json:"name"`
+	TempC float64 `json:"temp_c"`
+}
+
+// Battery is the main battery state; a nil pointer means the machine has
+// no battery (or the platform does not report one).
+type Battery struct {
+	Percent  float64 `json:"percent"`
+	Charging bool    `json:"charging"`
 }
 
 // Mem is one memory sample.

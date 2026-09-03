@@ -3,6 +3,7 @@ package collector
 import (
 	"context"
 	"os/user"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -15,6 +16,7 @@ import (
 	"github.com/shirou/gopsutil/v4/mem"
 	"github.com/shirou/gopsutil/v4/net"
 	"github.com/shirou/gopsutil/v4/process"
+	"github.com/shirou/gopsutil/v4/sensors"
 )
 
 // hostIdentity is the slow-changing part of Host, fetched once.
@@ -28,9 +30,14 @@ type hostIdentity struct {
 }
 
 // Collector polls system metrics on demand. It is safe for concurrent use.
+// The zero value is usable; use New to size the slow-metric cadence.
 type Collector struct {
 	once sync.Once
 	id   hostIdentity
+
+	// slowInterval throttles metrics that are expensive or slow-changing
+	// (temperatures, frequency, battery) to one sample per interval.
+	slowInterval time.Duration
 
 	mu         sync.Mutex
 	lastCPU    map[int32]float64 // pid -> user+system CPU seconds
@@ -38,6 +45,18 @@ type Collector struct {
 	lastNet    map[string]net.IOCountersStat
 	users      map[int32]string // uid -> username cache
 	pollClock  time.Time        // previous Collect wall clock
+
+	slowMu        sync.Mutex
+	lastSlow      time.Time
+	cachedFreq    float64
+	cachedSensors []Sensor
+	cachedBattery *Battery
+}
+
+// New returns a collector whose slow metrics are sampled at most once per
+// slowInterval (floored at 5s, since they are costly on some platforms).
+func New(refresh time.Duration) *Collector {
+	return &Collector{slowInterval: max(5*time.Second, refresh*5)}
 }
 
 // Collect gathers one snapshot. Sections that fail are left zeroed;
@@ -53,16 +72,41 @@ func (c *Collector) Collect(ctx context.Context) Snapshot {
 		elapsed = 0
 	}
 
+	freq, sensors, battery := c.collectSlow(ctx, now)
+	cpu := collectCPU(ctx)
+	cpu.FreqMHz = freq
+
 	return Snapshot{
 		Time:    now,
 		Host:    c.collectHost(ctx),
-		CPU:     collectCPU(ctx),
+		CPU:     cpu,
 		Mem:     collectMem(ctx),
+		Sensors: sensors,
+		Battery: battery,
 		Procs:   c.collectProcs(ctx, elapsed),
 		Disks:   c.collectDisks(ctx),
 		DiskIOs: c.collectDiskIO(ctx, elapsed),
 		Nets:    c.collectNet(ctx, elapsed),
 	}
+}
+
+// collectSlow returns frequency, temperatures and battery state, reading
+// them from cache unless the slow interval has elapsed.
+func (c *Collector) collectSlow(ctx context.Context, now time.Time) (float64, []Sensor, *Battery) {
+	c.slowMu.Lock()
+	defer c.slowMu.Unlock()
+
+	interval := c.slowInterval
+	if interval <= 0 {
+		interval = 5 * time.Second
+	}
+	if c.lastSlow.IsZero() || now.Sub(c.lastSlow) >= interval {
+		c.lastSlow = now
+		c.cachedFreq = collectFreq(ctx)
+		c.cachedSensors = collectSensors(ctx)
+		c.cachedBattery = readBattery(ctx)
+	}
+	return c.cachedFreq, c.cachedSensors, c.cachedBattery
 }
 
 func (c *Collector) collectHost(ctx context.Context) Host {
@@ -109,6 +153,61 @@ func collectCPU(ctx context.Context) CPU {
 		c.Cores = pct
 	}
 	return c
+}
+
+// sensorHints match CPU-relevant sensor names across vendors (coretemp,
+// k10temp, cpu_thermal, packageid, acpi, soc dts, ...).
+var sensorHints = []string{"cpu", "core", "thermal", "package", "k10temp", "acpi", "soc"}
+
+// collectSensors returns CPU-relevant temperature readings, hottest
+// first, capped at a handful. Readings of 0°C (missing data) are dropped;
+// an empty result means the platform exposes nothing useful.
+func collectSensors(ctx context.Context) []Sensor {
+	temps, err := sensors.TemperaturesWithContext(ctx)
+	if err != nil && len(temps) == 0 {
+		return nil
+	}
+	var out []Sensor
+	for _, s := range temps {
+		if s.Temperature <= 0 {
+			continue
+		}
+		name := strings.ToLower(s.SensorKey)
+		relevant := false
+		for _, hint := range sensorHints {
+			if strings.Contains(name, hint) {
+				relevant = true
+				break
+			}
+		}
+		if !relevant {
+			continue
+		}
+		out = append(out, Sensor{Name: s.SensorKey, TempC: s.Temperature})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].TempC > out[j].TempC })
+	return out[:min(len(out), 4)]
+}
+
+// collectFreq returns the average current CPU clock in MHz, or 0 when the
+// platform does not expose per-core frequencies.
+func collectFreq(ctx context.Context) float64 {
+	infos, err := cpu.InfoWithContext(ctx)
+	if err != nil {
+		return 0
+	}
+	var sum float64
+	var n int
+	for _, in := range infos {
+		if in.Mhz > 0 {
+			sum += in.Mhz
+			n++
+		}
+	}
+	if n == 0 {
+		return 0
+	}
+	return sum / float64(n)
 }
 
 func collectMem(ctx context.Context) Mem {
