@@ -17,6 +17,14 @@ test:
 vet:
 	$(GO) vet ./...
 
+lint:
+ifeq ($(shell command -v golangci-lint 2>/dev/null),)
+	@echo "golangci-lint not found; falling back to go vet"
+	$(GO) vet ./...
+else
+	golangci-lint run
+endif
+
 cross:
 	CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" -o dist/$(BINARY)-darwin-arm64       ./cmd/wrongtop
 	CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" -o dist/$(BINARY)-darwin-x86_64     ./cmd/wrongtop
