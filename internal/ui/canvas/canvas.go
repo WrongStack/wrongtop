@@ -164,6 +164,28 @@ func (g *Graph) styleFor(v float64) lipgloss.Style {
 // eighthBlocks are the vertical fill runes from 1/8 to 7/8.
 var eighthBlocks = []rune{'▏', '▎', '▍', '▌', '▋', '▊', '▉'}
 
+// Scale tracks a decaying ceiling for auto-scaled rate graphs, btop
+// style: it jumps instantly to fit a spike and then decays slowly back
+// toward the recent values. The zero value is usable (ceiling 1).
+type Scale struct {
+	max float64
+}
+
+// Observe records one sample and returns the ceiling to render it
+// against. The decay of 2% per sample yields a ~34s half-life at a 1s
+// refresh; the ceiling never drops below the current sample or 1.
+func (s *Scale) Observe(v float64) float64 {
+	if v > s.max {
+		s.max = v
+	} else {
+		s.max = max(s.max*0.98, v, 1)
+	}
+	return s.max
+}
+
+// Max returns the current ceiling.
+func (s *Scale) Max() float64 { return s.max }
+
 // Bar renders a horizontal fraction bar of the given cell width using
 // full blocks and eighth-block edges.
 func Bar(width int, frac float64, filled, empty lipgloss.Style) string {
