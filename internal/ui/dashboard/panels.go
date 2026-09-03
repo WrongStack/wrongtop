@@ -329,6 +329,8 @@ func shortRate(bps float64) string {
 // ifaceBudget is how many interface rows the network panel shows.
 func ifaceBudget(h int) int { return clampInt((h-16)/5, 1, 4) }
 
+// trunc shortens s to at most w-1 runes plus an ellipsis, cutting at
+// rune boundaries so multi-byte names stay valid UTF-8.
 func trunc(s string, w int) string {
 	if len(s) <= w {
 		return s
@@ -336,7 +338,11 @@ func trunc(s string, w int) string {
 	if w < 1 {
 		return ""
 	}
-	return s[:max(0, w-1)] + "…"
+	r := []rune(s)
+	if len(r) <= w { // long in bytes, short in runes: nothing to drop
+		return s
+	}
+	return string(r[:w-1]) + "…"
 }
 
 // padLines pads (or truncates) content to exactly n lines so grid boxes

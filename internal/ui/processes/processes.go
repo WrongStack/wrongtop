@@ -324,9 +324,15 @@ func columns(width int) []table.Column {
 
 func tableWidth(width int) int { return max(40, width) }
 
+// trunc shortens s to at most n-1 runes plus an ellipsis, cutting at
+// rune boundaries so multi-byte names stay valid UTF-8.
 func trunc(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n-1] + "…"
+	r := []rune(s)
+	if len(r) <= n { // long in bytes, short in runes: nothing to drop
+		return s
+	}
+	return string(r[:n-1]) + "…"
 }
