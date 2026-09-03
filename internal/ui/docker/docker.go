@@ -82,6 +82,12 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 		}
 		return m.waitForLog()
 
+	case logDoneMsg:
+		// stream ended (container exited, daemon closed it, or ctx
+		// cancelled): stop waiting instead of re-arming on a closed
+		// channel, which would busy-loop
+		return nil
+
 	case tea.KeyPressMsg:
 		return m.key(msg)
 	}
@@ -89,6 +95,10 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 }
 
 type logLineMsg string
+
+// logDoneMsg signals that the log stream channel was closed by the
+// reader goroutine — the terminal event of waitForLog.
+type logDoneMsg struct{}
 
 type actionDoneMsg struct {
 	label string
@@ -198,7 +208,7 @@ func (m *Model) waitForLog() tea.Cmd {
 	return func() tea.Msg {
 		s, ok := <-lines
 		if !ok {
-			return logLineMsg("")
+			return logDoneMsg{}
 		}
 		return logLineMsg(s)
 	}
