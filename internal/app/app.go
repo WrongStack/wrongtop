@@ -12,10 +12,12 @@ import (
 
 	"github.com/ersinkoc/wrongtop/internal/collector"
 	"github.com/ersinkoc/wrongtop/internal/config"
+	"github.com/ersinkoc/wrongtop/internal/dockerclient"
 	"github.com/ersinkoc/wrongtop/internal/theme"
 	"github.com/ersinkoc/wrongtop/internal/ui"
 	"github.com/ersinkoc/wrongtop/internal/ui/dashboard"
 	"github.com/ersinkoc/wrongtop/internal/ui/disks"
+	"github.com/ersinkoc/wrongtop/internal/ui/docker"
 	"github.com/ersinkoc/wrongtop/internal/ui/network"
 	"github.com/ersinkoc/wrongtop/internal/ui/processes"
 )
@@ -26,6 +28,7 @@ type Model struct {
 	theme     *theme.Theme
 	version   string
 	collector *collector.Collector
+	docker    *dockerclient.Client
 
 	width  int
 	height int
@@ -44,7 +47,7 @@ func New(cfg *config.Config, version string) *Model {
 		tabs: []ui.Tab{
 			dashboard.New(cfg, th),
 			processes.New(cfg, th),
-			ui.NewPlaceholder("DOCKER", "containers, stats and actions — phase 5"),
+			docker.New(cfg, th),
 			disks.New(cfg, th),
 			network.New(cfg, th),
 		},
@@ -61,9 +64,12 @@ func Run(cfg *config.Config, version string) error {
 // tickMsg fires on every refresh interval.
 type tickMsg time.Time
 
+// dockerRetryMsg schedules a daemon reconnect attempt.
+type dockerRetryMsg struct{}
+
 // Init implements tea.Model.
 func (m *Model) Init() tea.Cmd {
-	return tea.Batch(m.tickCmd(), m.collectCmd())
+	return tea.Batch(m.tickCmd(), m.collectCmd(), m.connectDockerCmd())
 }
 
 func (m *Model) tickCmd() tea.Cmd {
@@ -78,6 +84,23 @@ func (m *Model) collectCmd() tea.Cmd {
 	}
 }
 
+func (m *Model) connectDockerCmd() tea.Cmd {
+	return func() tea.Msg {
+		c, err := dockerclient.New()
+		return dockerclient.UpdateMsg{Client: c, Err: err}
+	}
+}
+
+func (m *Model) dockerListCmd() tea.Cmd {
+	client := m.docker
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+		defer cancel()
+		cons, err := client.List(ctx)
+		return dockerclient.UpdateMsg{Client: client, Containers: cons, Err: err}
+	}
+}
+
 // Update implements tea.Model.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -89,11 +112,36 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tickMsg:
-		return m, tea.Batch(m.tickCmd(), m.collectCmd())
+		cmds := []tea.Cmd{m.tickCmd(), m.collectCmd()}
+		if m.docker != nil {
+			cmds = append(cmds, m.dockerListCmd())
+		}
+		return m, tea.Batch(cmds...)
+
+	case dockerRetryMsg:
+		return m, m.connectDockerCmd()
 
 	case collector.SnapshotMsg:
 		var cmds []tea.Cmd
 		for _, t := range m.tabs { // hidden tabs keep their history buffers warm
+			if cmd := t.Update(msg); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+		return m, tea.Batch(cmds...)
+
+	case dockerclient.UpdateMsg:
+		if msg.Client != nil {
+			m.docker = msg.Client
+		}
+		if msg.Client == nil && msg.Err != nil {
+			// daemon absent or down — retry after a pause
+			return m, tea.Tick(5*time.Second, func(time.Time) tea.Msg {
+				return dockerRetryMsg{}
+			})
+		}
+		var cmds []tea.Cmd
+		for _, t := range m.tabs {
 			if cmd := t.Update(msg); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
