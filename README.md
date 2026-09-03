@@ -49,9 +49,9 @@ Global (work on every tab):
 
 | Key | Action |
 |---|---|
-| `1`–`5` | jump to tab |
+| `1`–`N` | jump to tab (the status bar shows the live range) |
 | `tab` / `shift+tab` | next / previous tab |
-| `?` | toggle the help overlay |
+| `?` / `esc` | toggle / dismiss the help overlay |
 | `q` / `ctrl+c` | quit |
 
 Processes tab:
@@ -59,11 +59,11 @@ Processes tab:
 | Key | Action |
 |---|---|
 | `↑` `↓` / mouse wheel | move selection |
-| `/` | filter — matches name, user, or PID prefix for all-digit queries |
+| `/` | filter — matches name, user, or PID prefix for all-digit queries (config: `keys.filter`) |
 | `s` | cycle sort key: cpu → mem → pid → name → user |
 | `S` | reverse sort order |
-| `k` | terminate selected process (SIGTERM) |
-| `K` | force kill selected process (SIGKILL) |
+| `k` | terminate selected process (SIGTERM) (config: `keys.kill`) |
+| `K` | force kill selected process (SIGKILL) — the uppercase variant of the kill key |
 | `y` / `f` / `n` `esc` | confirm / upgrade to `kill -9` / cancel |
 
 WrongTop refuses to kill its own process.
@@ -83,14 +83,22 @@ WrongTop works with no configuration. To customize, run `wrongtop config-sample`
 theme: gruvbox-dark       # gruvbox-dark | catppuccin-mocha | dracula
 refresh: 1s               # sample interval, clamped to 250ms–10s
 
+modules:                  # optional tabs
+  processes: true         # show the process table
+  docker: true            # show the Docker tab
+
 thresholds:               # percent where values turn warning / critical
   cpu_warn: 70
   cpu_crit: 90
   mem_warn: 80
   mem_crit: 95
+
+keys:                     # processes-tab overrides (single letters)
+  kill: k                 # terminate key; its uppercase variant force-kills
+  filter: /
 ```
 
-Missing fields fall back to the defaults shown; a missing file is not an error.
+Missing fields fall back to the defaults shown; a missing file is not an error. The `modules` flags control which tabs are built, and empty `keys` values fall back to the defaults shown.
 
 ## Project layout
 

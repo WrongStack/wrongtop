@@ -4,6 +4,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -37,21 +38,26 @@ type Model struct {
 	helpMode bool
 }
 
-// New builds the root model with all tabs attached.
+// New builds the root model with the tabs enabled by cfg.Modules.
 func New(cfg *config.Config, version string) *Model {
 	th := theme.ByName(cfg.Theme)
+	// dashboard, disks and network are always present; cfg.Modules gates
+	// the optional tabs.
+	tabs := []ui.Tab{dashboard.New(cfg, th)}
+	if cfg.Modules.Processes {
+		tabs = append(tabs, processes.New(cfg, th))
+	}
+	if cfg.Modules.Docker {
+		tabs = append(tabs, docker.New(cfg, th))
+	}
+	tabs = append(tabs, disks.New(cfg, th), network.New(cfg, th))
+
 	m := &Model{
 		cfg:       cfg,
 		theme:     th,
 		version:   version,
 		collector: &collector.Collector{},
-		tabs: []ui.Tab{
-			dashboard.New(cfg, th),
-			processes.New(cfg, th),
-			docker.New(cfg, th),
-			disks.New(cfg, th),
-			network.New(cfg, th),
-		},
+		tabs:      tabs,
 	}
 	return m
 }
@@ -70,7 +76,11 @@ type dockerRetryMsg struct{}
 
 // Init implements tea.Model.
 func (m *Model) Init() tea.Cmd {
-	return tea.Batch(m.tickCmd(), m.collectCmd(), m.connectDockerCmd())
+	cmds := []tea.Cmd{m.tickCmd(), m.collectCmd()}
+	if m.cfg.Modules.Docker {
+		cmds = append(cmds, m.connectDockerCmd())
+	}
+	return tea.Batch(cmds...)
 }
 
 func (m *Model) tickCmd() tea.Cmd {
@@ -114,7 +124,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tickMsg:
 		cmds := []tea.Cmd{m.tickCmd(), m.collectCmd()}
-		if m.docker != nil {
+		if m.cfg.Modules.Docker && m.docker != nil {
 			cmds = append(cmds, m.dockerListCmd())
 		}
 		return m, tea.Batch(cmds...)
@@ -229,7 +239,7 @@ func (m *Model) tabBarView() string {
 func (m *Model) statusBarView() string {
 	left := m.theme.Styles.Title.Render("wrongtop ") +
 		m.theme.Styles.Muted.Render("v"+m.version)
-	right := m.theme.Styles.HelpKey.Render("1-5") +
+	right := m.theme.Styles.HelpKey.Render(fmt.Sprintf("1-%d", len(m.tabs))) +
 		m.theme.Styles.HelpText.Render(" tabs  ") +
 		m.theme.Styles.HelpKey.Render("tab") +
 		m.theme.Styles.HelpText.Render(" next  ") +

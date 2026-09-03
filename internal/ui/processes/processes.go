@@ -4,6 +4,7 @@ package processes
 
 import (
 	"fmt"
+	"strings"
 
 	"charm.land/bubbles/v2/table"
 	"charm.land/bubbles/v2/textinput"
@@ -87,9 +88,10 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 
 	case tea.MouseWheelMsg:
 		mouse := msg.Mouse()
-		if mouse.Button == tea.MouseWheelUp {
+		switch mouse.Button {
+		case tea.MouseWheelUp:
 			m.table.MoveUp(3)
-		} else if mouse.Button == tea.MouseWheelDown {
+		case tea.MouseWheelDown:
 			m.table.MoveDown(3)
 		}
 		return nil
@@ -109,7 +111,7 @@ func (m *Model) key(key tea.KeyPressMsg) tea.Cmd {
 	}
 
 	switch key.String() {
-	case "/":
+	case m.cfg.Keys.Filter:
 		m.editing = true
 		return m.input.Focus()
 	case "s":
@@ -118,9 +120,9 @@ func (m *Model) key(key tea.KeyPressMsg) tea.Cmd {
 	case "S":
 		m.desc = !m.desc
 		m.rebuild()
-	case "k":
+	case m.killKey():
 		return m.openConfirm(false)
-	case "K":
+	case m.forceKey():
 		return m.openConfirm(true)
 	default:
 		var cmd tea.Cmd
@@ -171,7 +173,7 @@ func (m *Model) confirmKey(key tea.KeyPressMsg) tea.Cmd {
 		} else {
 			m.status = m.th.Styles.OK.Render(fmt.Sprintf("signal sent to %d", c.pid))
 		}
-	case "f":
+	case "f", m.forceKey():
 		m.confirm.force = true
 	case "n", "esc":
 		m.confirm = nil
@@ -239,6 +241,13 @@ func (m *Model) row(p collector.Proc) table.Row {
 	}
 }
 
+// killKey returns the configured terminate key, lowercased; its uppercase
+// variant triggers a force kill.
+func (m *Model) killKey() string { return strings.ToLower(m.cfg.Keys.Kill) }
+
+// forceKey returns the force-kill variant of the terminate key.
+func (m *Model) forceKey() string { return strings.ToUpper(m.killKey()) }
+
 // View implements ui.Tab.
 func (m *Model) View() string {
 	if m.width < 1 {
@@ -272,18 +281,18 @@ func (m *Model) footerView() string {
 	if m.confirm != nil {
 		return m.th.Styles.HelpText.Render("  ") +
 			m.th.Styles.HelpKey.Render("y") + m.th.Styles.HelpText.Render(" term  ") +
-			m.th.Styles.HelpKey.Render("f") + m.th.Styles.HelpText.Render(" kill -9  ") +
+			m.th.Styles.HelpKey.Render(m.forceKey()) + m.th.Styles.HelpText.Render(" kill -9  ") +
 			m.th.Styles.HelpKey.Render("esc") + m.th.Styles.HelpText.Render(" cancel")
 	}
 	if m.editing {
 		return "  " + m.input.View()
 	}
 	return m.th.Styles.HelpText.Render("  ") +
-		m.th.Styles.HelpKey.Render("/") + m.th.Styles.HelpText.Render(" filter  ") +
+		m.th.Styles.HelpKey.Render(m.cfg.Keys.Filter) + m.th.Styles.HelpText.Render(" filter  ") +
 		m.th.Styles.HelpKey.Render("s") + m.th.Styles.HelpText.Render(" sort  ") +
 		m.th.Styles.HelpKey.Render("S") + m.th.Styles.HelpText.Render(" reverse  ") +
-		m.th.Styles.HelpKey.Render("k") + m.th.Styles.HelpText.Render(" term  ") +
-		m.th.Styles.HelpKey.Render("K") + m.th.Styles.HelpText.Render(" kill")
+		m.th.Styles.HelpKey.Render(m.killKey()) + m.th.Styles.HelpText.Render(" term  ") +
+		m.th.Styles.HelpKey.Render(m.forceKey()) + m.th.Styles.HelpText.Render(" kill")
 }
 
 func (m *Model) confirmView() string {

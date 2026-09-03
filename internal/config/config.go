@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
+	"unicode"
 
 	"gopkg.in/yaml.v3"
 )
@@ -144,4 +146,32 @@ func (c *Config) normalize() {
 	if c.Theme == "" {
 		c.Theme = "gruvbox-dark"
 	}
+	if !validKeyOverride(c.Keys.Kill) {
+		c.Keys.Kill = "k"
+	}
+	if !validKeyOverride(c.Keys.Filter) {
+		c.Keys.Filter = "/"
+	}
+	// The kill key is matched case-insensitively and its uppercase variant
+	// force-kills, so kill and filter must not collide.
+	if strings.EqualFold(c.Keys.Kill, c.Keys.Filter) {
+		c.Keys.Kill = "k"
+		c.Keys.Filter = "/"
+	}
+}
+
+// validKeyOverride reports whether s is a usable single-letter key
+// binding. Multi-character values ("ctrl+k"), non-letters ("1", "#") and
+// the reserved sort keys ("s", "S") are rejected so they fall back to the
+// defaults instead of shadowing built-in bindings.
+func validKeyOverride(s string) bool {
+	r := []rune(s)
+	if len(r) != 1 || !unicode.IsLetter(r[0]) {
+		return false
+	}
+	switch r[0] {
+	case 's', 'S': // reserved: sort cycle / reverse order
+		return false
+	}
+	return true
 }
