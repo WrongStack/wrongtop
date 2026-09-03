@@ -3,4 +3,5 @@
 /.wrongstack/*
 !/.wrongstack/project.json
 .zcode/
-.mimosa/
+.mimosa/dist/
+wrongtop

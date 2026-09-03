@@ -1,0 +1,52 @@
+version: 2
+
+project_name: wrongtop
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/ersinkoc/wrongtop/cmd/wrongtop.version={{.Version}}
+
+archives:
+  - formats: ["{{ if eq .Os \"windows\" }}zip{{ else }}tar.gz{{ end }}"]
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "arm64" }}aarch64
+      {{- else }}{{ .Arch }}{{ end }}
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+brews:
+  - repository:
+      owner: ersinkoc
+      name: homebrew-tap
+    homepage: "https://github.com/ersinkoc/wrongtop"
+    description: "Cross-platform terminal system monitor: CPU, memory, processes, disks, network and Docker."
+    license: MIT

@@ -1,17 +1,18 @@
 # WrongTop
 
-**WrongTop** is a cross-platform terminal system monitor for macOS, Linux and Windows. It watches CPU, memory and processes in a tabbed TUI with live braille charts — inspired by htop and btop, built with Go, [Bubble Tea](https://github.com/charmbracelet/bubbletea) and [gopsutil](https://github.com/shirou/gopsutil).
+**WrongTop** is a cross-platform terminal system monitor for macOS, Linux and Windows. It watches CPU, memory, processes, disks, network and Docker containers in a tabbed TUI with live braille charts — inspired by htop and btop, built with Go, [Bubble Tea](https://github.com/charmbracelet/bubbletea) v2 and [gopsutil](https://github.com/shirou/gopsutil).
 
 ## Features
 
 - **Dashboard** — host identity (OS, kernel, uptime, load average), total CPU with a scrolling braille graph, per-core usage bars, and memory/swap panels with history graphs
 - **Process table** — sortable, live-filterable list of every process with PID, name, CPU%, MEM%, RSS, user, thread count and htop-style state letter; terminate (SIGTERM) or force kill (SIGKILL) behind a confirmation prompt
+- **Docker** — container list with live CPU, memory, network and block I/O; start / stop / restart; follow-mode log viewer with stream demultiplexing. The daemon is optional: the tab shows a notice and retries until it appears
+- **Disks** — filesystem usage bars plus per-device read/write rates, IOPS and busy time
+- **Network** — per-interface throughput and totals, sorted by current activity
 - **Threshold colors** — values shift from normal → warning → critical based on configurable CPU/memory thresholds
 - **Themes** — three built-in palettes: `gruvbox-dark` (default), `catppuccin-mocha`, `dracula`
 - **Zero-config** — runs fine without a config file; YAML overrides are optional
 - Mouse wheel scrolling and alt-screen rendering, responsive down to narrow terminals
-
-Planned: disk, network and Docker tabs (placeholders are already wired into the tab bar).
 
 ## Installation
 
@@ -26,8 +27,10 @@ Or build from source:
 ```sh
 git clone https://github.com/ersinkoc/wrongtop
 cd wrongtop
-go build -o wrongtop ./cmd/wrongtop
+make build   # or: go build -o wrongtop ./cmd/wrongtop
 ```
+
+Release binaries (macOS/Linux/Windows × amd64/arm64), a Homebrew tap and checksums are produced by [goreleaser](https://goreleaser.com) on every `v*` tag.
 
 ## Usage
 
@@ -35,6 +38,7 @@ go build -o wrongtop ./cmd/wrongtop
 wrongtop                  # start the monitor
 wrongtop -c config.yaml   # use a specific config file
 wrongtop version          # print the version
+wrongtop config-sample    # print an annotated sample config
 ```
 
 The config file can also be set with the `WRONGTOP_CONFIG` environment variable; otherwise `~/.config/wrongtop/config.yaml` is used if present.
@@ -47,6 +51,7 @@ Global (work on every tab):
 |---|---|
 | `1`–`5` | jump to tab |
 | `tab` / `shift+tab` | next / previous tab |
+| `?` | toggle the help overlay |
 | `q` / `ctrl+c` | quit |
 
 Processes tab:
@@ -63,9 +68,16 @@ Processes tab:
 
 WrongTop refuses to kill its own process.
 
+Docker tab:
+
+| Key | Action |
+|---|---|
+| `enter` | follow container logs (`esc` to go back) |
+| `s` / `t` / `r` | start / stop / restart container |
+
 ## Configuration
 
-WrongTop works with no configuration. To customize, create `~/.config/wrongtop/config.yaml` (or point `WRONGTOP_CONFIG` / `--config` at a file):
+WrongTop works with no configuration. To customize, run `wrongtop config-sample` and start from the annotated output.
 
 ```yaml
 theme: gruvbox-dark       # gruvbox-dark | catppuccin-mocha | dracula
@@ -80,46 +92,51 @@ thresholds:               # percent where values turn warning / critical
 
 Missing fields fall back to the defaults shown; a missing file is not an error.
 
-> Note: the `modules` and `keys` config sections are parsed by the loader but not yet enforced by the UI.
-
 ## Project layout
 
 | Package | Purpose |
 |---|---|
-| `cmd/wrongtop` | CLI entry point (cobra): flags and version command |
-| `internal/app` | Bubble Tea root model: tab bar, global keys, layout |
-| `internal/collector` | gopsutil polling into JSON-ready `Snapshot` values |
+| `cmd/wrongtop` | CLI entry point (cobra): flags and version commands |
+| `internal/app` | Bubble Tea root model: tab bar, global keys, help overlay, layout |
+| `internal/collector` | gopsutil polling into JSON-ready `Snapshot` values (darwin fast path via bulk sysctl) |
 | `internal/config` | YAML config loading, defaults and clamping |
-| `internal/format` | byte-count and uptime formatting helpers |
+| `internal/dockerclient` | moby SDK wrapper: container list + stats, actions, log streaming |
+| `internal/format` | byte-count, rate and uptime formatting helpers |
 | `internal/procs` | process filter, sort, terminate/force-kill |
 | `internal/theme` | palettes and derived lipgloss styles |
-| `internal/ui` | tab contract, titled borders, braille canvas graphs |
+| `internal/ui` | tab contract and titled borders |
+| `internal/ui/canvas` | braille time-series graphs and fraction bars |
 | `internal/ui/dashboard` | the overview tab |
 | `internal/ui/processes` | the process table tab |
+| `internal/ui/docker` | the containers tab |
+| `internal/ui/disks` | the filesystems and I/O tab |
+| `internal/ui/network` | the per-interface traffic tab |
 
 ## Development
 
 ```sh
-go build ./cmd/wrongtop   # build
-go test ./...             # run tests
-go vet ./...              # static checks
+make build   # build
+make test    # run tests (-race)
+make vet     # static checks
+make cross   # all 6 platform targets into dist/
 ```
 
 Embed a version string at build time:
 
 ```sh
-go build -ldflags "-X main.version=$(git describe --tags --always)" -o wrongtop ./cmd/wrongtop
+go build -ldflags "-X github.com/ersinkoc/wrongtop/cmd/wrongtop.version=$(git describe --tags --always)" -o wrongtop ./cmd/wrongtop
 ```
 
 ## Roadmap
 
 - [x] Dashboard: host, CPU, memory, swap
 - [x] Processes: filter, sort, terminate / force kill
-- [ ] Disks: filesystems and I/O rates
-- [ ] Network: per-interface traffic
-- [ ] Docker: containers, stats and actions
+- [x] Disks: filesystems and I/O rates
+- [x] Network: per-interface traffic
+- [x] Docker: containers, stats, actions, log streaming
+- [ ] Process tree view
 - [ ] Remote monitoring — collector snapshots are plain data, designed to cross a wire post-v1
 
 ## License
 
-No license has been added yet.
+MIT — see [LICENSE](LICENSE).
