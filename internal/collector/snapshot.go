@@ -89,12 +89,11 @@ type DiskIO struct {
 
 // NetIface is a per-interface traffic sample (rates are interval deltas).
 type NetIface struct {
-	Name   string  `json:"name"`
-	RxRate float64 `json:"rx_rate"` // bytes/s
-	TxRate float64 `json:"tx_rate"` // bytes/s
+	Name          string  `json:"name"`
+	RxRate        float64 `json:"rx_rate"` // bytes/s
+	TxRate        float64 `json:"tx_rate"` // bytes/s
 	RxRatePackets float64 `json:"rx_pps"`
 	TxRatePackets float64 `json:"tx_pps"`
-	RxTotal uint64  `json:"rx_total"`
-	TxTotal uint64  `json:"tx_total"`
+	RxTotal       uint64  `json:"rx_total"`
+	TxTotal       uint64  `json:"tx_total"`
 }
-

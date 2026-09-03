@@ -64,9 +64,10 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 
 	case tea.MouseWheelMsg:
 		mouse := msg.Mouse()
-		if mouse.Button == tea.MouseWheelUp {
+		switch mouse.Button {
+		case tea.MouseWheelUp:
 			m.table.MoveUp(3)
-		} else if mouse.Button == tea.MouseWheelDown {
+		case tea.MouseWheelDown:
 			m.table.MoveDown(3)
 		}
 		return nil

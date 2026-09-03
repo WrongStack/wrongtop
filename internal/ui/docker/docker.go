@@ -35,7 +35,7 @@ type Model struct {
 	cons   []dockerclient.Container
 	err    error // last poll/connect error
 
-	logFor    string    // container name shown in the log pane ("" = list mode)
+	logFor    string // container name shown in the log pane ("" = list mode)
 	logs      []string
 	logStream <-chan string
 	cancelLog context.CancelFunc
@@ -161,7 +161,7 @@ func (m *Model) openLogs() tea.Cmd {
 			lines <- "logs: " + err.Error()
 			return
 		}
-		defer r.Close()
+		defer func() { _ = r.Close() }()
 		pr, pw := io.Pipe()
 		go func() {
 			err := dockerclient.CopyLogStream(pw, r, tty)

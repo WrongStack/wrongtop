@@ -30,14 +30,14 @@ type Client struct {
 // New connects to the daemon (DOCKER_HOST or the default socket/pipe)
 // and verifies it answers. The returned client must be Closed.
 func New() (*Client, error) {
-	cli, err := client.New(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := client.New(client.FromEnv)
 	if err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if _, err := cli.Ping(ctx, client.PingOptions{}); err != nil {
-		cli.Close()
+		_ = cli.Close()
 		return nil, fmt.Errorf("docker daemon unreachable: %w", err)
 	}
 	return &Client{cli: cli}, nil
@@ -97,7 +97,7 @@ func (c *Client) fillStats(ctx context.Context, id string, ct *Container) error 
 	if err != nil {
 		return err
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 
 	var st container.StatsResponse
 	if err := json.NewDecoder(res.Body).Decode(&st); err != nil {

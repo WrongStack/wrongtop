@@ -122,7 +122,7 @@ func (m *Model) cpuView() string {
 	}
 	pct := m.th.Value(m.cfg.Thresholds.CPUWarn, m.cfg.Thresholds.CPUCrit, m.cpu.Percent).
 		Render(fmt.Sprintf("%.1f%%", m.cpu.Percent))
-	head := m.th.Styles.Muted.Render("TOTAL ")+pct+
+	head := m.th.Styles.Muted.Render("TOTAL ") + pct +
 		m.th.Styles.Muted.Render(fmt.Sprintf("  ·  %d cores", len(m.cpu.Cores)))
 	body := strings.Join([]string{head, m.cpuGraph.View()}, "\n")
 
