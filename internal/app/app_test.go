@@ -3,9 +3,11 @@ package app
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"charm.land/bubbletea/v2"
 
+	"github.com/ersinkoc/wrongtop/internal/collector"
 	"github.com/ersinkoc/wrongtop/internal/config"
 	"github.com/ersinkoc/wrongtop/internal/dockerclient"
 )
@@ -45,6 +47,31 @@ func TestStatusBarShowsDynamicTabRange(t *testing.T) {
 	out := m.statusBarView()
 	if !strings.Contains(out, "1-3") {
 		t.Errorf("status bar missing dynamic tab range 1-3: %q", out)
+	}
+}
+
+// TestStatusBarLiveSummary pins the btop-style bottom line: once a
+// snapshot has arrived the bar shows cpu/mem percentages and net rates.
+func TestStatusBarLiveSummary(t *testing.T) {
+	cfg := config.Default()
+	m := New(cfg, "test")
+	m.width = 120
+
+	if out := m.statusBarView(); strings.Contains(out, "cpu") {
+		t.Error("status bar should not show a summary before any sample")
+	}
+
+	m.Update(collector.SnapshotMsg{Snap: collector.Snapshot{
+		Time: time.Now(),
+		CPU:  collector.CPU{Percent: 34},
+		Mem:  collector.Mem{Percent: 62},
+		Nets: []collector.NetIface{{Name: "en0", RxRate: 1.2e6, TxRate: 340e3}},
+	}})
+	out := m.statusBarView()
+	for _, want := range []string{"cpu 34%", "mem 62%", "1.2 Mb/s", "340.0 Kb/s"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("status bar summary missing %q: %q", want, out)
+		}
 	}
 }
 

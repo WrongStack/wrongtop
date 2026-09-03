@@ -14,6 +14,7 @@ import (
 	"github.com/ersinkoc/wrongtop/internal/collector"
 	"github.com/ersinkoc/wrongtop/internal/config"
 	"github.com/ersinkoc/wrongtop/internal/dockerclient"
+	"github.com/ersinkoc/wrongtop/internal/format"
 	"github.com/ersinkoc/wrongtop/internal/theme"
 	"github.com/ersinkoc/wrongtop/internal/ui"
 	"github.com/ersinkoc/wrongtop/internal/ui/dashboard"
@@ -36,6 +37,8 @@ type Model struct {
 	active   int
 	tabs     []ui.Tab
 	helpMode bool
+
+	latest collector.Snapshot // most recent sample, for the status bar
 }
 
 // New builds the root model with the tabs enabled by cfg.Modules.
@@ -56,7 +59,7 @@ func New(cfg *config.Config, version string) *Model {
 		cfg:       cfg,
 		theme:     th,
 		version:   version,
-		collector: &collector.Collector{},
+		collector: collector.New(cfg.Refresh.D()),
 		tabs:      tabs,
 	}
 	return m
@@ -133,6 +136,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.connectDockerCmd()
 
 	case collector.SnapshotMsg:
+		m.latest = msg.Snap
 		var cmds []tea.Cmd
 		for _, t := range m.tabs { // hidden tabs keep their history buffers warm
 			if cmd := t.Update(msg); cmd != nil {
@@ -239,6 +243,7 @@ func (m *Model) tabBarView() string {
 func (m *Model) statusBarView() string {
 	left := m.theme.Styles.Title.Render("wrongtop ") +
 		m.theme.Styles.Muted.Render("v"+m.version)
+
 	right := m.theme.Styles.HelpKey.Render(fmt.Sprintf("1-%d", len(m.tabs))) +
 		m.theme.Styles.HelpText.Render(" tabs  ") +
 		m.theme.Styles.HelpKey.Render("tab") +
@@ -248,9 +253,23 @@ func (m *Model) statusBarView() string {
 		m.theme.Styles.HelpKey.Render("q") +
 		m.theme.Styles.HelpText.Render(" quit")
 
-	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
+	// live summary, btop-style bottom line
+	mid := ""
+	if !m.latest.Time.IsZero() {
+		var rx, tx float64
+		for _, n := range m.latest.Nets {
+			rx += n.RxRate
+			tx += n.TxRate
+		}
+		mid = fmt.Sprintf("cpu %.0f%%  mem %.0f%%  ↓%s ↑%s",
+			m.latest.CPU.Percent, m.latest.Mem.Percent, format.Rate(rx), format.Rate(tx))
+	}
+
+	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - lipgloss.Width(mid)
 	if gap < 1 {
 		gap = 1
 	}
-	return m.theme.Styles.Status.Render(left + strings.Repeat(" ", gap) + right)
+	half := gap / 2
+	return m.theme.Styles.Status.Render(left +
+		strings.Repeat(" ", half) + mid + strings.Repeat(" ", gap-half) + right)
 }
