@@ -1,0 +1,46 @@
+// Command wrongtop is a cross-platform terminal system monitor for
+// macOS, Linux and Windows.
+package main
+
+import (
+	"fmt"
+	"os"
+
+	"github.com/ersinkoc/wrongtop/internal/app"
+	"github.com/ersinkoc/wrongtop/internal/config"
+	"github.com/spf13/cobra"
+)
+
+// version is set at build time via -ldflags.
+var version = "dev"
+
+func main() {
+	root := &cobra.Command{
+		Use:          "wrongtop",
+		Short:        "A cross-platform terminal system monitor",
+		Long:         "WrongTop is a terminal system monitor for macOS, Linux and Windows.\nIt watches CPU, memory, processes, disks, network and Docker containers.",
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load(cmd.Flag("config").Value.String())
+			if err != nil {
+				return err
+			}
+			return app.Run(cfg, version)
+		},
+	}
+
+	root.Flags().StringP("config", "c", "",
+		"config file path (default: $WRONGTOP_CONFIG or ~/.config/wrongtop/config.yaml)")
+
+	root.AddCommand(&cobra.Command{
+		Use:   "version",
+		Short: "Print the version",
+		Run: func(cmd *cobra.Command, args []string) {
+			fmt.Println("wrongtop", version)
+		},
+	})
+
+	if err := root.Execute(); err != nil {
+		os.Exit(1)
+	}
+}

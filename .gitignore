@@ -1,0 +1,6 @@
+.wrongstack/
+!/.wrongstack/
+/.wrongstack/*
+!/.wrongstack/project.json
+.zcode/
+.mimosa/
