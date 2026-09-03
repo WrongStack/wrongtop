@@ -30,10 +30,11 @@ type Model struct {
 	collector *collector.Collector
 	docker    *dockerclient.Client
 
-	width  int
-	height int
-	active int
-	tabs   []ui.Tab
+	width    int
+	height   int
+	active   int
+	tabs     []ui.Tab
+	helpMode bool
 }
 
 // New builds the root model with all tabs attached.
@@ -164,6 +165,14 @@ func (m *Model) globalKey(key tea.KeyPressMsg) (tea.Cmd, bool) {
 	switch key.String() {
 	case "q", "ctrl+c":
 		return tea.Quit, true
+	case "?":
+		m.helpMode = !m.helpMode
+		return nil, true
+	case "esc":
+		if m.helpMode {
+			m.helpMode = false
+			return nil, true
+		}
 	case "tab":
 		m.active = (m.active + 1) % len(m.tabs)
 		return nil, true
@@ -181,15 +190,27 @@ func (m *Model) globalKey(key tea.KeyPressMsg) (tea.Cmd, bool) {
 
 // View implements tea.Model.
 func (m *Model) View() tea.View {
+	content := m.tabs[m.active].View()
+	if m.helpMode {
+		content = m.helpOverlay(content)
+	}
 	v := tea.NewView(strings.Join([]string{
 		m.tabBarView(),
-		m.tabs[m.active].View(),
+		content,
 		m.statusBarView(),
 	}, "\n"))
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
 	v.WindowTitle = "wrongtop"
 	return v
+}
+
+// helpOverlay centers the help box over the tab content.
+func (m *Model) helpOverlay(content string) string {
+	return lipgloss.JoinVertical(lipgloss.Center,
+		lipgloss.Place(m.width, strings.Count(content, "\n")+1,
+			lipgloss.Center, lipgloss.Center, m.helpView()),
+	)
 }
 
 func (m *Model) tabBarView() string {
@@ -212,6 +233,8 @@ func (m *Model) statusBarView() string {
 		m.theme.Styles.HelpText.Render(" tabs  ") +
 		m.theme.Styles.HelpKey.Render("tab") +
 		m.theme.Styles.HelpText.Render(" next  ") +
+		m.theme.Styles.HelpKey.Render("?") +
+		m.theme.Styles.HelpText.Render(" help  ") +
 		m.theme.Styles.HelpKey.Render("q") +
 		m.theme.Styles.HelpText.Render(" quit")
 

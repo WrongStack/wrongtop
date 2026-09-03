@@ -40,6 +40,14 @@ func main() {
 		},
 	})
 
+	root.AddCommand(&cobra.Command{
+		Use:   "config-sample",
+		Short: "Print an annotated sample config file",
+		Run: func(cmd *cobra.Command, args []string) {
+			fmt.Print(config.Sample)
+		},
+	})
+
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
 	}

@@ -75,6 +75,27 @@ func Default() *Config {
 	}
 }
 
+// Sample is an annotated example configuration, printed by
+// `wrongtop config-sample`.
+const Sample = `# ~/.config/wrongtop/config.yaml
+theme: gruvbox-dark      # gruvbox-dark | catppuccin-mocha | dracula
+refresh: 1s              # min 250ms, max 10s
+
+modules:
+  docker: true           # show the DOCKER tab (daemon optional)
+  processes: true
+
+thresholds:              # percent → warn/critical coloring
+  cpu_warn: 70
+  cpu_crit: 90
+  mem_warn: 80
+  mem_crit: 95
+
+keys:                    # overrides (processes tab)
+  kill: k                # terminate
+  filter: /
+`
+
 // Path returns the configuration file location: $WRONGTOP_CONFIG if set,
 // otherwise ~/.config/wrongtop/config.yaml.
 func Path() string {
