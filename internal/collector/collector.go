@@ -429,7 +429,8 @@ func (c *Collector) collectNet(ctx context.Context, elapsed float64) []NetIface 
 
 // abbrevState reduces gopsutil status strings to a single htop-style letter.
 func abbrevState(s string) string {
-	switch strings.ToLower(strings.TrimSpace(s)) {
+	state := strings.ToLower(strings.TrimSpace(s))
+	switch state {
 	case "running", "r":
 		return "R"
 	case "sleeping", "s":
@@ -446,7 +447,11 @@ func abbrevState(s string) string {
 		return "B"
 	case "locked", "l":
 		return "L"
+	case "":
+		// gopsutil maps unknown ps state chars to "" (its UnknownState
+		// constant) and returns it with a nil error; render as unknown
+		return "?"
 	default:
-		return strings.ToUpper(s[:1])
+		return strings.ToUpper(state[:1])
 	}
 }
