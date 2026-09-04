@@ -26,8 +26,10 @@ else
 endif
 
 cross:
-	CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" -o dist/$(BINARY)-darwin-arm64       ./cmd/wrongtop
-	CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" -o dist/$(BINARY)-darwin-x86_64     ./cmd/wrongtop
+	# darwin builds link IOKit (cgo) for AppleSMC sensors; the native arch
+	# uses the host SDK directly, the other needs the matching -arch support
+	CGO_ENABLED=1 $(GO) build -ldflags "$(LDFLAGS)" -o dist/$(BINARY)-darwin-arm64       ./cmd/wrongtop
+	CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" -o dist/$(BINARY)-darwin-arm64-nocgo ./cmd/wrongtop
 	CGO_ENABLED=0 GOOS=linux   $(GO) build -ldflags "$(LDFLAGS)" -o dist/$(BINARY)-linux-arm64   ./cmd/wrongtop
 	CGO_ENABLED=0 GOOS=linux   $(GO) build -ldflags "$(LDFLAGS)" -o dist/$(BINARY)-linux-x86_64  ./cmd/wrongtop
 	CGO_ENABLED=0 GOOS=windows $(GO) build -ldflags "$(LDFLAGS)" -o dist/$(BINARY)-windows-x86_64.exe ./cmd/wrongtop
