@@ -68,7 +68,7 @@ func TestStatusBarLiveSummary(t *testing.T) {
 		Nets: []collector.NetIface{{Name: "en0", RxRate: 1.2e6, TxRate: 340e3}},
 	}})
 	out := m.statusBarView()
-	for _, want := range []string{"cpu 34%", "mem 62%", "1.2 Mb/s", "340.0 Kb/s"} {
+	for _, want := range []string{"cpu", "34%", "mem 62%", "1.2 Mb/s", "340.0 Kb/s"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("status bar summary missing %q: %q", want, out)
 		}

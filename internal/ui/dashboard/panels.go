@@ -99,14 +99,16 @@ func (m *Model) cpuView(innerW, maxLines int) []string {
 
 	graph := strings.Split(m.cpuGraph.View(), "\n")
 	if hero := m.heroWorth(innerW, maxLines); hero {
-		// big digits left, graph right: the headline moment of the tab
+		// big digits left, graph right: the headline moment of the tab.
+		// The graph is sized to 4 rows in this mode, so the two blocks
+		// share every row — tops and bottoms aligned.
 		big := canvas.BigNumber(int(c.Percent+0.5), m.cpuRamp)
 		gap := strings.Repeat(" ", 2)
-		rows := make([]string, 4)
+		rows := make([]string, len(big))
 		for i := range big {
 			g := ""
-			if i > 0 && i-1 < len(graph) {
-				g = graph[i-1]
+			if i < len(graph) {
+				g = graph[i]
 			}
 			rows[i] = big[i] + gap + g
 		}
@@ -271,15 +273,29 @@ func (m *Model) netView(maxIface int) []string {
 	return lines
 }
 
-// diskView renders an aggregate I/O line plus usage bars per mount.
+// diskView renders an aggregate I/O line — with the busiest device's
+// busy meter when the panel is wide — plus usage bars per mount.
 func (m *Model) diskView(innerW, maxRows int) []string {
 	var rb, wb float64
+	busyName, busyPct := "", 0.0
 	for _, io := range m.snap.DiskIOs {
 		rb += io.ReadBytes
 		wb += io.WriteBytes
+		if io.BusyPercent > busyPct {
+			busyPct, busyName = io.BusyPercent, io.Name
+		}
 	}
-	lines := []string{m.th.Styles.Muted.Render("I/O ") +
-		fmt.Sprintf("R %s · W %s", format.Rate(rb), format.Rate(wb))}
+	head := m.th.Styles.Muted.Render("I/O ") +
+		fmt.Sprintf("R %s · W %s", format.Rate(rb), format.Rate(wb))
+	if busyName != "" && innerW >= 46 {
+		busyStyle := m.th.Value(60, 90, busyPct) //nolint:mnd // busy thresholds
+		head += m.th.Styles.Muted.Render("  ·  ") +
+			m.th.Styles.Muted.Render(trunc(busyName, 8)+" ") +
+			busyStyle.Render(canvas.GradientBar(
+				clampInt(innerW-46, 6, 14), busyPct/100, m.ioRamp, m.th.Styles.Muted)) +
+			busyStyle.Render(fmt.Sprintf(" %.0f%%", busyPct))
+	}
+	lines := []string{head}
 
 	disks := make([]collector.Disk, len(m.snap.Disks))
 	copy(disks, m.snap.Disks)

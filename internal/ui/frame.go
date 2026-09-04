@@ -15,14 +15,19 @@ type Panel struct {
 	X, Y, W, H int
 	Title      string
 	TitleStyle lipgloss.Style
-	Lines      []string // content lines, exactly W-2 cells wide each
+	// Border colors this panel's border cells individually; nil falls
+	// back to the Frame-wide border style.
+	Border *lipgloss.Style
+	Lines  []string // content lines, exactly W-2 cells wide each
 }
 
 // Frame renders panels inside one connected border grid. Adjacent panel
 // borders coincide, junctions resolve into the proper box-drawing
 // characters (├ ┤ ┬ ┴) and corners are rounded. Content that is smaller
-// than its panel is padded with spaces; overflow is truncated. The
-// outer size is exactly the union of the panel rectangles.
+// than its panel is padded with spaces; overflow is truncated. Panels
+// with their own Border style color their border cells individually —
+// where two colors meet, the later panel in the slice wins. The outer
+// size is exactly the union of the panel rectangles.
 func Frame(panels []Panel, border lipgloss.Style) string {
 	W, H := 0, 0
 	for _, p := range panels {
@@ -33,24 +38,31 @@ func Frame(panels []Panel, border lipgloss.Style) string {
 		return ""
 	}
 
-	// mark stores the border character for every border cell.
+	// mark stores the border character for every border cell and owner
+	// the panel index that claimed it, for per-panel border colors.
 	mark := make([][]rune, H)
+	owner := make([][]int, H)
 	for i := range mark {
 		mark[i] = []rune(strings.Repeat(" ", W))
+		owner[i] = make([]int, W)
+		for x := range owner[i] {
+			owner[i][x] = -1
+		}
 	}
-	set := func(y, x int, r rune) {
+	set := func(p Panel, pi, y, x int, r rune) {
 		if y >= 0 && y < H && x >= 0 && x < W {
 			mark[y][x] = r
+			owner[y][x] = pi
 		}
 	}
-	for _, p := range panels {
+	for pi, p := range panels {
 		for x := p.X; x < p.X+p.W; x++ {
-			set(p.Y, x, '─')
-			set(p.Y+p.H-1, x, '─')
+			set(p, pi, p.Y, x, '─')
+			set(p, pi, p.Y+p.H-1, x, '─')
 		}
 		for y := p.Y; y < p.Y+p.H; y++ {
-			set(y, p.X, '│')
-			set(y, p.X+p.W-1, '│')
+			set(p, pi, y, p.X, '│')
+			set(p, pi, y, p.X+p.W-1, '│')
 		}
 	}
 
@@ -125,6 +137,23 @@ func Frame(panels []Panel, border lipgloss.Style) string {
 		}
 	}
 
+	// per-panel border colors: cells claimed by a panel with its own
+	// Border style render in that color, the rest in the shared one.
+	// Same-owner runs are batched into one Render call.
+	styleFor := func(y, x int) lipgloss.Style {
+		if pi := owner[y][x]; pi >= 0 && panels[pi].Border != nil {
+			return *panels[pi].Border
+		}
+		return border
+	}
+	renderRun := func(y, x0, x1 int) string {
+		var sb strings.Builder
+		for cx := x0; cx < x1; cx++ {
+			sb.WriteRune(mark[y][cx])
+		}
+		return styleFor(y, x0).Render(sb.String())
+	}
+
 	out := make([]string, H)
 	for y := 0; y < H; y++ {
 		var b strings.Builder
@@ -132,13 +161,23 @@ func Frame(panels []Panel, border lipgloss.Style) string {
 		spans := rows[y]
 		for _, sp := range spans {
 			for ; x < sp.x0; x++ {
-				b.WriteString(border.Render(string(mark[y][x])))
+				run := x + 1
+				for run < sp.x0 && owner[y][run] == owner[y][x] {
+					run++
+				}
+				b.WriteString(renderRun(y, x, run))
+				x = run
 			}
 			b.WriteString(sp.text)
 			x = sp.x1
 		}
 		for ; x < W; x++ {
-			b.WriteString(border.Render(string(mark[y][x])))
+			run := x + 1
+			for run < W && owner[y][run] == owner[y][x] {
+				run++
+			}
+			b.WriteString(renderRun(y, x, run))
+			x = run
 		}
 		out[y] = b.String()
 	}

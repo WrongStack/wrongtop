@@ -18,6 +18,7 @@ import (
 	"github.com/ersinkoc/wrongtop/internal/remote"
 	"github.com/ersinkoc/wrongtop/internal/theme"
 	"github.com/ersinkoc/wrongtop/internal/ui"
+	"github.com/ersinkoc/wrongtop/internal/ui/canvas"
 	"github.com/ersinkoc/wrongtop/internal/ui/dashboard"
 	"github.com/ersinkoc/wrongtop/internal/ui/disks"
 	"github.com/ersinkoc/wrongtop/internal/ui/docker"
@@ -36,6 +37,9 @@ type alertEvent struct {
 
 // alertHistory caps the in-memory alert ring.
 const alertHistory = 256
+
+// cpuSparkSamples is the history length of the status-bar cpu sparkline.
+const cpuSparkSamples = 14
 
 // flashTTL is how long a transient status-bar note stays visible.
 const flashTTL = 3 * time.Second
@@ -57,6 +61,9 @@ type Model struct {
 
 	alerts     []*alertEvent
 	openAlerts map[string]*alertEvent
+
+	// cpu history for the status-bar sparkline (percent / 100 samples)
+	cpuHist []float64
 
 	flash      string // transient status-bar note
 	flashUntil time.Time
@@ -212,6 +219,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case collector.SnapshotMsg:
 		m.latest = msg.Snap
 		m.trackAlerts(msg.Snap)
+		pct := min(max(m.latest.CPU.Percent/100, 0), 1)
+		m.cpuHist = append(m.cpuHist, pct)
+		if len(m.cpuHist) > cpuSparkSamples {
+			m.cpuHist = m.cpuHist[len(m.cpuHist)-cpuSparkSamples:]
+		}
 		var cmds []tea.Cmd
 		for _, t := range m.tabs { // hidden tabs keep their history buffers warm
 			if cmd := t.Update(msg); cmd != nil {
@@ -545,8 +557,9 @@ func (m *Model) liveSummary() string {
 		}
 	}
 	var b strings.Builder
+	spark := canvas.Sparkline(m.cpuHist, canvas.Ramp{pal.BG}) // uncolored inside the chip
 	b.WriteString(m.chip(bgFor(t.CPUWarn, t.CPUCrit, m.latest.CPU.Percent),
-		fmt.Sprintf("cpu %.0f%%", m.latest.CPU.Percent)))
+		"cpu "+spark+fmt.Sprintf(" %.0f%%", m.latest.CPU.Percent)))
 	b.WriteString(" ")
 	b.WriteString(m.chip(bgFor(t.MemWarn, t.MemCrit, m.latest.Mem.Percent),
 		fmt.Sprintf("mem %.0f%%", m.latest.Mem.Percent)))

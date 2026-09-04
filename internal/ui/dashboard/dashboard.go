@@ -146,9 +146,11 @@ func (m *Model) SetSize(width, height int) {
 		return
 	}
 	cpuW := max(20, width-hostCol-8)
+	cpuH := 3
 	if m.density == densityFull && m.class() == layoutGrid {
-		// leave room for the big-digit hero beside the graph
+		// leave room for the big-digit hero beside a taller graph
 		cpuW = max(20, width-hostCol-2-14)
+		cpuH = 4
 	}
 	memW := max(14, hostCol-6)
 	rxW := max(10, netCol/2-1)
@@ -157,7 +159,7 @@ func (m *Model) SetSize(width, height int) {
 		memW = max(12, width/2-8)
 		rxW = max(8, width/4-1)
 	}
-	m.cpuGraph.Resize(cpuW, 3)
+	m.cpuGraph.Resize(cpuW, cpuH)
 	m.memGraph.Resize(memW, 2)
 	m.swapGraph.Resize(memW, 1)
 	m.rxGraph.Resize(rxW, 2)
@@ -267,6 +269,11 @@ func (m *Model) gridPanels(h int) []ui.Panel {
 	title := func(color string) lipgloss.Style {
 		return lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Bold(true)
 	}
+	// per-category border colors, btop-style: each panel owns its frame
+	borders := func(color string) *lipgloss.Style {
+		st := lipgloss.NewStyle().Foreground(lipgloss.Color(color))
+		return &st
+	}
 	pal := m.th.Palette
 	// divider columns at x=hostW and x=hostW+netW
 	hostW := hostCol
@@ -275,9 +282,9 @@ func (m *Model) gridPanels(h int) []ui.Panel {
 
 	panels := []ui.Panel{
 		{X: 0, Y: 0, W: hostW + 1, H: a, Title: "HOST", TitleStyle: title(pal.Blue),
-			Lines: m.hostView(a - 2)},
+			Border: borders(pal.Blue), Lines: m.hostView(a - 2)},
 		{X: hostW, Y: 0, W: w - hostW, H: a, Title: "CPU", TitleStyle: title(pal.Green),
-			Lines: m.cpuView(cpuInner, a-2)},
+			Border: borders(pal.Green), Lines: m.cpuView(cpuInner, a-2)},
 	}
 	if m.density == densityMinimal {
 		return panels
@@ -285,11 +292,11 @@ func (m *Model) gridPanels(h int) []ui.Panel {
 
 	panels = append(panels,
 		ui.Panel{X: 0, Y: a - 1, W: hostW + 1, H: b, Title: "MEMORY", TitleStyle: title(pal.Purple),
-			Lines: m.memView(hostW - 2)},
+			Border: borders(pal.Purple), Lines: m.memView(hostW - 2)},
 		ui.Panel{X: hostW, Y: a - 1, W: netW + 1, H: b, Title: "NETWORK", TitleStyle: title(pal.Cyan),
-			Lines: m.netView(max(0, b-7))},
+			Border: borders(pal.Cyan), Lines: m.netView(max(0, b-7))},
 		ui.Panel{X: hostW + netW, Y: a - 1, W: w - hostW - netW, H: b, Title: "DISKS", TitleStyle: title(pal.Orange),
-			Lines: m.diskView(w-hostW-netW-2, max(1, b-3))},
+			Border: borders(pal.Orange), Lines: m.diskView(w-hostW-netW-2, max(1, b-3))},
 	)
 	if c == 0 {
 		return panels
@@ -299,12 +306,12 @@ func (m *Model) gridPanels(h int) []ui.Panel {
 	if gpus := len(m.snap.GPUs); gpus > 0 && c >= 8 {
 		gh := min(5, gpus+3) // head + up to two adapters + borders
 		panels = append(panels, ui.Panel{X: 0, Y: procY, W: w, H: gh, Title: "GPUS",
-			TitleStyle: title(pal.Red), Lines: m.gpuLines(w-2, gh-2)})
+			TitleStyle: title(pal.Red), Border: borders(pal.Red), Lines: m.gpuLines(w-2, gh-2)})
 		procY += gh - 1 // share the border row
 		procH -= gh - 1
 	}
 	panels = append(panels, ui.Panel{X: 0, Y: procY, W: w, H: procH, Title: "PROCESSES",
-		TitleStyle: title(pal.FG), Lines: m.procView(w-2, max(2, procH-3))})
+		TitleStyle: title(pal.FG), Border: borders(pal.FG), Lines: m.procView(w-2, max(2, procH-3))})
 	return panels
 }
 
