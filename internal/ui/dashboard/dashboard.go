@@ -148,9 +148,10 @@ func (m *Model) SetSize(width, height int) {
 	cpuW := max(20, width-hostCol-8)
 	cpuH := 3
 	if m.density == densityFull && m.class() == layoutGrid {
-		// leave room for the big-digit hero beside a taller graph
-		cpuW = max(20, width-hostCol-2-14)
-		cpuH = 4
+		// leave room for the big-digit hero beside a hero-height graph:
+		// up to three digits (11 cells) plus the two-column gap
+		cpuW = max(20, width-hostCol-2-13)
+		cpuH = canvas.BigNumberHeight
 	}
 	memW := max(14, hostCol-6)
 	rxW := max(10, netCol/2-1)

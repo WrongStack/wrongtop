@@ -7,22 +7,26 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// bigDigits is a 4-row, 3-column block font for the hero readouts.
-var bigDigits = map[rune][4]string{
-	'0': {"███", "█ █", "█ █", "███"},
-	'1': {" █ ", " █ ", " █ ", " █ "},
-	'2': {"███", "  █", "█  ", "███"},
-	'3': {"███", "  █", "███", "  █"},
-	'4': {"█ █", "█ █", "███", "  █"},
-	'5': {"███", "█  ", "███", "  █"},
-	'6': {"█  ", "█  ", "███", "███"},
-	'7': {"███", "  █", "  █", "  █"},
-	'8': {"███", "█ █", "███", "███"},
-	'9': {"███", "█ █", "███", "  █"},
-	'.': {"   ", "   ", "   ", " █ "},
-	'%': {"█ █", "  █", " █ ", "█ █"},
-	' ': {"   ", "   ", "   ", "   "},
+// bigDigits is a 5-row, 3-column block font — tall enough to read at a
+// glance, unlike cramped 4-row attempts.
+var bigDigits = map[rune][5]string{
+	'0': {"███", "█ █", "█ █", "█ █", "███"},
+	'1': {" █ ", " █ ", " █ ", " █ ", " █ "},
+	'2': {"███", "  █", "███", "█  ", "███"},
+	'3': {"███", "  █", "███", "  █", "███"},
+	'4': {"█ █", "█ █", "███", "  █", "  █"},
+	'5': {"███", "█  ", "███", "  █", "███"},
+	'6': {"███", "█  ", "███", "█ █", "███"},
+	'7': {"███", "  █", "  █", "  █", "  █"},
+	'8': {"███", "█ █", "███", "█ █", "███"},
+	'9': {"███", "█ █", "███", "  █", "███"},
+	'.': {"   ", "   ", "   ", "   ", " █ "},
+	'%': {"█ █", "  █", " █ ", "█  ", " █ "},
+	' ': {"   ", "   ", "   ", "   ", "   "},
 }
+
+// BigNumberHeight is the row count of every BigNumber render.
+const BigNumberHeight = 5
 
 // BigNumberWidth reports the cell width BigNumber needs for n glyphs
 // (3 columns each plus a 1-column gap between glyphs).
@@ -33,7 +37,7 @@ func BigNumberWidth(n int) int {
 	return n*4 - 1
 }
 
-// BigNumber renders v as a 4-line block-digit banner colored along the
+// BigNumber renders v as a 5-line block-digit banner colored along the
 // ramp at value/100 — the btop-style hero readout for headline metrics.
 func BigNumber(v int, ramp Ramp) []string {
 	v = min(max(v, 0), 999)
@@ -41,8 +45,8 @@ func BigNumber(v int, ramp Ramp) []string {
 	color := lipgloss.Color(ramp.At(float64(v) / 100))
 	style := lipgloss.NewStyle().Foreground(color).Bold(true)
 
-	lines := make([]string, 4)
-	for row := 0; row < 4; row++ {
+	lines := make([]string, BigNumberHeight)
+	for row := 0; row < BigNumberHeight; row++ {
 		var sb strings.Builder
 		for i, ch := range s {
 			if i > 0 {

@@ -90,8 +90,13 @@ func (m *Model) cpuView(innerW, maxLines int) []string {
 	}
 
 	lines := []string{head}
-	if sl := m.sensorsLine(innerW); sl != "" {
-		lines = append(lines, sl)
+	// sensors line only in the compact layout: the hero path budgets
+	// head + hero + meter to fit even the shallowest grid band exactly
+	hero := m.heroWorth(innerW, maxLines)
+	if !hero {
+		if sl := m.sensorsLine(innerW); sl != "" {
+			lines = append(lines, sl)
+		}
 	}
 	if innerW > 20 { // full-width gradient meter, btop-style
 		lines = append(lines, canvas.GradientBar(innerW, c.Percent/100, m.cpuRamp, m.th.Styles.Muted))
@@ -100,8 +105,8 @@ func (m *Model) cpuView(innerW, maxLines int) []string {
 	graph := strings.Split(m.cpuGraph.View(), "\n")
 	if hero := m.heroWorth(innerW, maxLines); hero {
 		// big digits left, graph right: the headline moment of the tab.
-		// The graph is sized to 4 rows in this mode, so the two blocks
-		// share every row — tops and bottoms aligned.
+		// The graph is sized to the hero height in this mode, so the
+		// two blocks share every row — tops and bottoms aligned.
 		big := canvas.BigNumber(int(c.Percent+0.5), m.cpuRamp)
 		gap := strings.Repeat(" ", 2)
 		rows := make([]string, len(big))
@@ -127,9 +132,10 @@ func (m *Model) cpuView(innerW, maxLines int) []string {
 }
 
 // heroWorth reports whether the panel is wide and tall enough for the
-// big-digit hero composition.
+// big-digit hero composition. This must stay in sync with SetSize,
+// which sizes the cpu graph to the hero height for the same condition.
 func (m *Model) heroWorth(innerW, maxLines int) bool {
-	return m.density == densityFull && innerW >= 56 && maxLines >= 8
+	return m.density == densityFull && m.class() == layoutGrid && innerW >= 56
 }
 
 // perCoreView renders mini bars, up to perCoreColumns per row, bounded by
@@ -179,7 +185,15 @@ func (m *Model) coreBar(i int, pct float64) string {
 // the first thing dropped on short screens.
 func (m *Model) memView(innerW int) []string {
 	mem := m.snap.Mem
-	barW := clampInt(innerW-14, 12, 28)
+
+	heroMode := innerW >= 30 && m.density != densityMinimal
+	heroW := 0
+	var big []string
+	if heroMode {
+		big = canvas.BigNumber(int(mem.Percent+0.5), m.memRamp)
+		heroW = lipgloss.Width(big[0]) + 2
+	}
+	barW := clampInt(innerW-heroW-14, 10, 28)
 
 	right := []string{
 		m.th.Styles.Muted.Render(fmt.Sprintf("RAM   %s / %s", format.Bytes(mem.Used), format.Bytes(mem.Total))),
@@ -208,22 +222,17 @@ func (m *Model) memView(innerW int) []string {
 	}
 
 	var lines []string
-	if heroWorth := innerW >= 26 && m.density != densityMinimal; heroWorth {
-		// big percent left, meters right
-		big := canvas.BigNumber(int(mem.Percent+0.5), m.memRamp)
-		gap := strings.Repeat(" ", 2)
-		for i := 0; i < len(big) || i < len(right); i++ {
-			l, r := "", ""
+	if heroMode {
+		// the hero column stays padded on every row so the meters never
+		// slide left once the digits run out
+		blank := strings.Repeat(" ", heroW)
+		for i := 0; i < max(len(big), len(right)); i++ {
+			l, r := blank, ""
 			if i < len(big) {
-				l = big[i]
+				l = big[i] + strings.Repeat(" ", heroW-lipgloss.Width(big[i]))
 			}
 			if i < len(right) {
 				r = right[i]
-			}
-			if i == 0 && l != "" { // align the meters under the digits
-				l += gap
-			} else if l != "" {
-				l += gap
 			}
 			lines = append(lines, l+r)
 		}

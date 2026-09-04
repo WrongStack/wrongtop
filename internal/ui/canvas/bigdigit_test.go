@@ -9,8 +9,8 @@ import (
 
 func TestBigNumberShape(t *testing.T) {
 	lines := BigNumber(45, Ramp{"#00ff00"})
-	if len(lines) != 4 {
-		t.Fatalf("BigNumber rows = %d, want 4", len(lines))
+	if len(lines) != BigNumberHeight {
+		t.Fatalf("BigNumber rows = %d, want %d", len(lines), BigNumberHeight)
 	}
 	if got := lipgloss.Width(lines[0]); got != BigNumberWidth(2) {
 		t.Fatalf("width = %d, want %d", got, BigNumberWidth(2))
@@ -18,6 +18,12 @@ func TestBigNumberShape(t *testing.T) {
 	joined := strings.Join(lines, "\n")
 	if strings.Count(joined, "█") < 12 {
 		t.Errorf("too few blocks for two digits: %q", joined)
+	}
+	// every row must share the same visible width or the hero shifts
+	for i, l := range lines {
+		if lipgloss.Width(l) != BigNumberWidth(2) {
+			t.Errorf("row %d width = %d, want %d", i, lipgloss.Width(l), BigNumberWidth(2))
+		}
 	}
 }
 
@@ -29,13 +35,13 @@ func TestBigNumberDigits(t *testing.T) {
 	}
 	// '.' sits on the bottom row only
 	g := bigDigits['.']
-	for row := 0; row < 3; row++ {
+	for row := 0; row < 4; row++ {
 		if g[row] != "   " {
 			t.Errorf("dot row %d not blank: %q", row, g[row])
 		}
 	}
-	if g[3] != " █ " {
-		t.Errorf("dot baseline wrong: %q", g[3])
+	if g[4] != " █ " {
+		t.Errorf("dot baseline wrong: %q", g[4])
 	}
 }
 
