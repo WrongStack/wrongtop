@@ -477,14 +477,18 @@ func (m *Model) tabBarView() string {
 	return m.theme.Styles.TabBar.Render(strings.Join(parts, ""))
 }
 
-// statusBarView renders the btop-style bottom line: identity left, live
-// chips center, key hints right.
+// statusBarView renders the btop-style bottom line: an identity chip
+// left, live chips center, key hints right.
 func (m *Model) statusBarView() string {
-	left := m.theme.Styles.Title.Render("wrongtop ") +
-		m.theme.Styles.Muted.Render("v"+m.version)
+	pal := m.theme.Palette
+	logo := lipgloss.NewStyle().Background(lipgloss.Color(pal.Purple)).
+		Foreground(lipgloss.Color(pal.BG)).Bold(true).
+		Padding(0, 1).Render("WRONGTOP")
+	left := logo + " " + m.theme.Styles.Muted.Render("v"+m.version)
 	if m.stream != nil {
-		left += m.theme.Styles.Warn.Render("  REMOTE ") +
-			m.theme.Styles.Muted.Render(m.remoteAddr)
+		left += " " + lipgloss.NewStyle().Background(lipgloss.Color(pal.Orange)).
+			Foreground(lipgloss.Color(pal.BG)).Bold(true).
+			Padding(0, 1).Render("REMOTE "+m.remoteAddr)
 	}
 
 	right := m.theme.Styles.HelpKey.Render(fmt.Sprintf("1-%d", len(m.tabs))) +
@@ -502,7 +506,9 @@ func (m *Model) statusBarView() string {
 
 	mid := ""
 	if time.Now().Before(m.flashUntil) && m.flash != "" {
-		mid = m.theme.Styles.Warn.Render(m.flash)
+		mid = lipgloss.NewStyle().Background(lipgloss.Color(pal.Yellow)).
+			Foreground(lipgloss.Color(pal.BG)).Bold(true).
+			Padding(0, 1).Render(m.flash)
 	} else if !m.latest.Time.IsZero() {
 		mid = m.liveSummary()
 	}
@@ -516,38 +522,60 @@ func (m *Model) statusBarView() string {
 		strings.Repeat(" ", half) + mid + strings.Repeat(" ", gap-half) + right)
 }
 
+// chip renders a status-bar segment with a solid background, btop-style.
+func (m *Model) chip(bg, text string) string {
+	return lipgloss.NewStyle().Background(lipgloss.Color(bg)).
+		Foreground(lipgloss.Color(m.theme.Palette.BG)).Padding(0, 1).Render(text)
+}
+
 // liveSummary renders the center chips: cpu, memory, network rates and,
 // when the platform reports them, temperature and battery.
 func (m *Model) liveSummary() string {
+	pal := m.theme.Palette
+	t := m.cfg.Thresholds
+
+	bgFor := func(warn, crit, v float64) string {
+		switch {
+		case v >= crit:
+			return pal.Red
+		case v >= warn:
+			return pal.Yellow
+		default:
+			return pal.Green
+		}
+	}
 	var b strings.Builder
-	b.WriteString(m.theme.Value(m.cfg.Thresholds.CPUWarn, m.cfg.Thresholds.CPUCrit, m.latest.CPU.Percent).
-		Render(fmt.Sprintf("cpu %.0f%%", m.latest.CPU.Percent)))
-	b.WriteString(m.theme.Styles.Muted.Render("  "))
-	b.WriteString(m.theme.Value(m.cfg.Thresholds.MemWarn, m.cfg.Thresholds.MemCrit, m.latest.Mem.Percent).
-		Render(fmt.Sprintf("mem %.0f%%", m.latest.Mem.Percent)))
+	b.WriteString(m.chip(bgFor(t.CPUWarn, t.CPUCrit, m.latest.CPU.Percent),
+		fmt.Sprintf("cpu %.0f%%", m.latest.CPU.Percent)))
+	b.WriteString(" ")
+	b.WriteString(m.chip(bgFor(t.MemWarn, t.MemCrit, m.latest.Mem.Percent),
+		fmt.Sprintf("mem %.0f%%", m.latest.Mem.Percent)))
 
 	var rx, tx float64
 	for _, n := range m.latest.Nets {
 		rx += n.RxRate
 		tx += n.TxRate
 	}
-	b.WriteString(m.theme.Styles.Muted.Render("  ↓" + format.Rate(rx) + " ↑" + format.Rate(tx)))
+	b.WriteString(" ")
+	b.WriteString(m.chip(pal.Blue, fmt.Sprintf("↓%s ↑%s", format.Rate(rx), format.Rate(tx))))
 
 	if len(m.latest.Sensors) > 0 {
 		s := m.latest.Sensors[0]
-		b.WriteString("  " + m.theme.Value(m.cfg.Thresholds.TempWarn, m.cfg.Thresholds.TempCrit, s.TempC).
-			Render(fmt.Sprintf("%.0f°C", s.TempC)))
+		b.WriteString(" ")
+		b.WriteString(m.chip(bgFor(t.TempWarn, t.TempCrit, s.TempC),
+			fmt.Sprintf("%.0f°C", s.TempC)))
 	}
 	if bat := m.latest.Battery; bat != nil {
 		icon := "bat"
 		if bat.Charging {
 			icon = "⚡"
 		}
-		style := m.theme.Styles.Warn
-		if bat.Charging || bat.Percent > 30 {
-			style = m.theme.Styles.OK
+		bg := pal.Green
+		if !bat.Charging && bat.Percent <= 30 {
+			bg = pal.Red
 		}
-		b.WriteString("  " + style.Render(fmt.Sprintf("%s%.0f%%", icon, bat.Percent)))
+		b.WriteString(" ")
+		b.WriteString(m.chip(bg, fmt.Sprintf("%s%.0f%%", icon, bat.Percent)))
 	}
 	return b.String()
 }

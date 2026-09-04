@@ -38,6 +38,12 @@ type Model struct {
 	live bool // at least one snapshot received
 
 	density int // 0 full, 1 compact (fewer graphs), 2 minimal (HOST+CPU)
+
+	// value ramps for the gradient meters, derived from the theme
+	cpuRamp canvas.Ramp
+	memRamp canvas.Ramp
+	ioRamp  canvas.Ramp
+	batRamp canvas.Ramp
 }
 
 // Density presets cycle with p and start from config layout.
@@ -56,7 +62,7 @@ func New(cfg *config.Config, th *theme.Theme) *Model {
 	case "minimal":
 		density = densityMinimal
 	}
-	return &Model{
+	m := &Model{
 		cfg:       cfg,
 		th:        th,
 		density:   density,
@@ -66,6 +72,17 @@ func New(cfg *config.Config, th *theme.Theme) *Model {
 		rxGraph:   canvas.New(16, 2, ramp(th, th.Palette.Green, th.Palette.Cyan)),
 		txGraph:   canvas.New(16, 2, ramp(th, th.Palette.Blue, th.Palette.Cyan)),
 	}
+	m.applyRamps(th)
+	return m
+}
+
+// applyRamps derives the gradient meters from the palette.
+func (m *Model) applyRamps(th *theme.Theme) {
+	p := th.Palette
+	m.cpuRamp = canvas.Ramp{p.Green, p.Yellow, p.Orange, p.Red}
+	m.memRamp = canvas.Ramp{p.Blue, p.Purple, p.Red}
+	m.ioRamp = canvas.Ramp{p.Cyan, p.Green, p.Yellow, p.Red}
+	m.batRamp = canvas.Ramp{p.Red, p.Orange, p.Green}
 }
 
 // Title implements ui.Tab.
@@ -75,6 +92,7 @@ func (m *Model) Title() string { return "DASHBOARD" }
 // they must be rebuilt alongside the styles.
 func (m *Model) SetTheme(th *theme.Theme) {
 	m.th = th
+	m.applyRamps(th)
 	m.cpuGraph.SetRamp(ramp(th, th.Palette.Green, th.Palette.Yellow, th.Palette.Orange, th.Palette.Red))
 	m.memGraph.SetRamp(ramp(th, th.Palette.Blue, th.Palette.Purple, th.Palette.Red))
 	m.swapGraph.SetRamp(ramp(th, th.Palette.Purple, th.Palette.Red))
@@ -167,66 +185,82 @@ func (m *Model) View() string {
 		return wait
 	}
 
-	var rows []string
-	if strip := m.alertsView(); strip != "" {
-		rows = append(rows, strip)
-	}
+	// the btop-style connected grid: one frame, shared dividers
 	if m.class() == layoutGrid {
-		rows = append(rows, m.gridRows()...)
-	} else {
-		rows = append(rows, m.stackedRows()...)
+		h := m.height
+		strip := m.alertsView()
+		if strip != "" {
+			h-- // the alert strip takes one row above the frame
+		}
+		frame := ui.Frame(m.gridPanels(h), m.th.Styles.BorderChar)
+		if strip != "" {
+			return strip + "\n" + frame
+		}
+		return frame
 	}
+
+	var rows []string
+	rows = append(rows, m.stackedRows()...)
 	return strings.Join(rows, "\n")
 }
 
-// gridRows lays out the three bands: HOST|CPU, MEMORY|NETWORK|DISKS and a
-// full-width PROCESSES panel. Band heights come from the content height;
-// when the process panel cannot pay for itself the two upper bands split
-// the space instead.
-func (m *Model) gridRows() []string {
-	w, h := m.width, m.height
-	remaining := h - 2 - alertLines(m) // row gaps
-	rowA := clampInt(remaining*4/10, 9, 12)
-	rowB := clampInt(remaining*3/10, 7, 10)
-	rowC := remaining - rowA - rowB
-	if rowC < 5 {
-		rowC = 0
-		rowA = clampInt(remaining*5/9, 9, 13)
-		rowB = remaining - rowA
+// gridPanels lays out the connected frame: HOST|CPU, MEMORY|NETWORK|DISKS
+// and a full-width PROCESSES panel, with a GPU band inserted above the
+// process panel when adapters are present. Adjacent panels overlap by
+// exactly one border column/row, so dividers are single shared lines.
+func (m *Model) gridPanels(h int) []ui.Panel {
+	w := m.width
+	a := clampInt(h*4/10, 9, 12) // band A rows (0..a-1)
+	b := clampInt(h*3/10, 7, 10) // band B rows (a-1..a+b-2)
+	c := h - a - b + 2           // band C shares two border rows
+	if c < 6 {                   // the process panel cannot pay for itself
+		c = 0
+		a = clampInt(h*5/9, 9, 13)
+		b = h - a + 1
 	}
 
-	cpuInner := w - hostCol - 4
-	memInner := hostCol - 2
-	diskInner := w - hostCol - netCol - 4
-	// the network panel is 1 head + 2+2 graph rows + iface lines
-	ifaceN := min(ifaceBudget(h), max(0, rowB-7))
+	title := func(color string) lipgloss.Style {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Bold(true)
+	}
+	pal := m.th.Palette
+	// divider columns at x=hostW and x=hostW+netW
+	hostW := hostCol
+	netW := netCol
+	cpuInner := w - hostW - 2
 
-	row1 := lipgloss.JoinHorizontal(lipgloss.Top,
-		m.box(memInner, "HOST", padLines(m.hostView(), rowA-2)),
-		" ",
-		m.box(cpuInner, "CPU", padLines(m.cpuView(cpuInner, rowA-2), rowA-2)),
-	)
+	panels := []ui.Panel{
+		{X: 0, Y: 0, W: hostW + 1, H: a, Title: "HOST", TitleStyle: title(pal.Blue),
+			Lines: m.hostView()},
+		{X: hostW, Y: 0, W: w - hostW, H: a, Title: "CPU", TitleStyle: title(pal.Green),
+			Lines: m.cpuView(cpuInner, a-2)},
+	}
 	if m.density == densityMinimal {
-		return []string{row1}
+		return panels
 	}
-	row2 := lipgloss.JoinHorizontal(lipgloss.Top,
-		m.box(memInner, "MEMORY", padLines(m.memView(memInner), rowB-2)),
-		" ",
-		m.box(netCol-2, "NETWORK", padLines(m.netView(ifaceN), rowB-2)),
-		" ",
-		m.box(diskInner, "DISKS", padLines(m.diskView(diskInner, rowB-3), rowB-2)),
+
+	panels = append(panels,
+		ui.Panel{X: 0, Y: a - 1, W: hostW + 1, H: b, Title: "MEMORY", TitleStyle: title(pal.Purple),
+			Lines: m.memView(hostW - 2)},
+		ui.Panel{X: hostW, Y: a - 1, W: netW + 1, H: b, Title: "NETWORK", TitleStyle: title(pal.Cyan),
+			Lines: m.netView(max(0, b-7))},
+		ui.Panel{X: hostW + netW, Y: a - 1, W: w - hostW - netW, H: b, Title: "DISKS", TitleStyle: title(pal.Orange),
+			Lines: m.diskView(w-hostW-netW-2, max(1, b-3))},
 	)
-	rows := []string{row1, "", row2}
-	if rowC > 0 {
-		procRows := rowC - 3
-		if gpus := len(m.snap.GPUs); gpus > 0 && procRows >= 7 {
-			gpuRows := min(3, gpus+1) // head + up to two adapters
-			rows = append(rows, "", m.box(w-2, "GPUS", strings.Join(m.gpuLines(w-6, gpuRows), "\n")))
-			procRows -= gpuRows + 1 // the box plus its gap row
-		}
-		rows = append(rows, "", m.box(w-2, "PROCESSES", strings.Join(m.procView(w-6, procRows), "\n")))
+	if c == 0 {
+		return panels
 	}
-	return rows
+
+	procY, procH := a+b-2, c
+	if gpus := len(m.snap.GPUs); gpus > 0 && c >= 8 {
+		gh := min(5, gpus+3) // head + up to two adapters + borders
+		panels = append(panels, ui.Panel{X: 0, Y: procY, W: w, H: gh, Title: "GPUS",
+			TitleStyle: title(pal.Red), Lines: m.gpuLines(w-2, gh-2)})
+		procY += gh - 1 // share the border row
+		procH -= gh - 1
+	}
+	panels = append(panels, ui.Panel{X: 0, Y: procY, W: w, H: procH, Title: "PROCESSES",
+		TitleStyle: title(pal.FG), Lines: m.procView(w-2, max(2, procH-3))})
+	return panels
 }
 
 // stackedRows arranges the same panels in as few rows as the width
@@ -301,14 +335,6 @@ func (m *Model) box(innerW int, title, content string) string {
 	padded := lipgloss.NewStyle().Width(innerW).Render(content)
 	return ui.Box(lipgloss.RoundedBorder(), m.th.Styles.Border, m.th.Styles.BorderChar,
 		m.th.Styles.BorderTitle, title, padded)
-}
-
-// alertLines reports how many rows the alert strip occupies.
-func alertLines(m *Model) int {
-	if len(m.alerts()) > 0 {
-		return 1
-	}
-	return 0
 }
 
 func (m *Model) kv(key, val string) string {

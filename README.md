@@ -4,7 +4,8 @@
 
 ## Features
 
-- **Single-screen overview** (btop-style): the dashboard packs every major panel into one screen — host identity, CPU, memory/swap/zram, network, disks, GPUs and the busiest processes — in a responsive bordered grid
+- **Single-screen overview** (btop-style): the dashboard packs every major panel into one **connected border frame** — shared dividers, resolved junctions, per-panel colored titles — with host identity, CPU, memory/swap/zram, network, disks, GPUs and the busiest processes in a responsive grid
+- **Gradient meters** — bars sweep the palette ramp across their length (CPU, memory, swap, zram, disks, GPUs, battery), btop-style, and process CPU% is colored along the same ramp
 - **Dashboard panels** — host (OS, kernel, uptime, load average, logged-in users, temperatures, battery, fan speeds), total CPU with a scrolling braille graph, per-core usage bars and frequency, RAM/swap/zram bars with history, network down/up graphs with the busiest interfaces, per-mount usage bars with aggregate I/O rates, and a top-process panel
 - **Sensors** — CPU temperatures and fan RPMs on every platform it can get them: on macOS (arm64) WrongTop reads the AppleSMC directly via IOKit — real P-core temperatures that neither btop nor glances show on a Mac — plus battery state through IOPowerSources; Linux uses hwmon; Windows tries ACPI thermal zones and WMI
 - **GPU monitoring** — utilization, VRAM and temperature through NVIDIA's NVML driver library, loaded at runtime (no cgo, no helper process); the panel appears only when a GPU exists

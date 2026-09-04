@@ -42,9 +42,11 @@ func (m *Model) hostView() []string {
 	if b := m.snap.Battery; b != nil {
 		state := "on battery"
 		if b.Charging {
-			state = "charging"
+			state = "charging ⚡"
 		}
-		lines = append(lines, m.kv("BATTERY", fmt.Sprintf("%.0f%% (%s)", b.Percent, state)))
+		meter := canvas.GradientBar(8, b.Percent/100, m.batRamp, m.th.Styles.Muted)
+		lines = append(lines, m.kv("BATTERY",
+			fmt.Sprintf("%.0f%% ", b.Percent)+meter+m.th.Styles.Muted.Render(" "+state)))
 	}
 	if len(m.snap.Fans) > 0 {
 		fans := m.snap.Fans[:min(len(m.snap.Fans), 2)]
@@ -61,7 +63,8 @@ func (m *Model) hostView() []string {
 	return lines
 }
 
-// cpuView renders the total gauge, the scrolling graph and per-core bars.
+// cpuView renders the total gauge, a full-width gradient meter, the
+// scrolling graph and per-core bars.
 // maxLines bounds the output; per-core rows are trimmed first.
 func (m *Model) cpuView(innerW, maxLines int) []string {
 	c := m.snap.CPU
@@ -80,9 +83,12 @@ func (m *Model) cpuView(innerW, maxLines int) []string {
 	if sl := m.sensorsLine(innerW); sl != "" {
 		lines = append(lines, sl)
 	}
+	if innerW > 20 { // full-width gradient meter, btop-style
+		lines = append(lines, canvas.GradientBar(innerW, c.Percent/100, m.cpuRamp, m.th.Styles.Muted))
+	}
 	lines = append(lines, strings.Split(m.cpuGraph.View(), "\n")...)
 
-	graphH := len(lines) // head (+sensors) + graph rows; per-core fills the rest
+	graphH := len(lines) // head + meter + graph rows; per-core fills the rest
 	if m.density < densityCompact {
 		if coreLines := m.perCoreView(innerW, maxLines-graphH); coreLines != "" {
 			lines = append(lines, strings.Split(coreLines, "\n")...)
@@ -128,16 +134,14 @@ func (m *Model) perCoreView(innerW, maxRows int) string {
 
 func (m *Model) coreBar(i int, pct float64) string {
 	label := m.th.Styles.Muted.Render(fmt.Sprintf("c%-2d", i))
-	bar := canvas.Bar(10, pct/100,
-		m.th.Value(m.cfg.Thresholds.CPUWarn, m.cfg.Thresholds.CPUCrit, pct),
-		m.th.Styles.Muted,
-	)
+	bar := canvas.GradientBar(10, pct/100, m.cpuRamp, m.th.Styles.Muted)
 	val := m.th.Styles.Muted.Render(fmt.Sprintf("%3.0f%%", pct))
 	return label + bar + val
 }
 
-// memView renders RAM and swap bars in one panel; the history graphs
-// trail so they are the first thing dropped on short screens.
+// memView renders gradient meters for RAM, swap and zram in one panel;
+// the history graphs trail so they are the first thing dropped on short
+// screens.
 func (m *Model) memView(innerW int) []string {
 	mem := m.snap.Mem
 	barW := clampInt(innerW-14, 12, 28)
@@ -145,7 +149,7 @@ func (m *Model) memView(innerW int) []string {
 	lines := []string{
 		m.valuePct(mem.Percent, m.cfg.Thresholds.MemWarn, m.cfg.Thresholds.MemCrit) +
 			m.th.Styles.Muted.Render(fmt.Sprintf("  %s / %s", format.Bytes(mem.Used), format.Bytes(mem.Total))),
-		m.bar(barW, mem.Percent, m.cfg.Thresholds.MemWarn, m.cfg.Thresholds.MemCrit),
+		canvas.GradientBar(barW, mem.Percent/100, m.memRamp, m.th.Styles.Muted),
 	}
 
 	if mem.SwapTotal > 0 {
@@ -153,7 +157,7 @@ func (m *Model) memView(innerW int) []string {
 			m.valuePct(mem.SwapPercent, m.cfg.Thresholds.MemWarn, m.cfg.Thresholds.MemCrit)+
 				m.th.Styles.Muted.Render(fmt.Sprintf("  SWAP  %s / %s",
 					format.Bytes(mem.SwapUsed), format.Bytes(mem.SwapTotal))),
-			m.bar(barW, mem.SwapPercent, m.cfg.Thresholds.MemWarn, m.cfg.Thresholds.MemCrit),
+			canvas.GradientBar(barW, mem.SwapPercent/100, m.memRamp, m.th.Styles.Muted),
 		)
 	} else {
 		lines = append(lines, m.th.Styles.Muted.Render("SWAP —"))
@@ -165,7 +169,7 @@ func (m *Model) memView(innerW int) []string {
 			m.valuePct(pct, m.cfg.Thresholds.MemWarn, m.cfg.Thresholds.MemCrit)+
 				m.th.Styles.Muted.Render(fmt.Sprintf("  ZRAM  %s / %s",
 					format.Bytes(mem.ZramUsed), format.Bytes(mem.ZramTotal))),
-			m.bar(barW, pct, m.cfg.Thresholds.MemWarn, m.cfg.Thresholds.MemCrit),
+			canvas.GradientBar(barW, pct/100, m.ioRamp, m.th.Styles.Muted),
 		)
 	}
 
@@ -219,7 +223,7 @@ func (m *Model) diskView(innerW, maxRows int) []string {
 	for _, d := range disks[:min(len(disks), max(0, maxRows))] {
 		mount := trunc(filepath.Base(d.Mountpoint), 9)
 		name := m.th.Styles.Muted.Render(fmt.Sprintf("%-9s", mount))
-		bar := m.bar(barW, d.Percent, m.cfg.Thresholds.MemWarn, m.cfg.Thresholds.MemCrit)
+		bar := canvas.GradientBar(barW, d.Percent/100, m.ioRamp, m.th.Styles.Muted)
 		pct := m.valuePct(d.Percent, m.cfg.Thresholds.MemWarn, m.cfg.Thresholds.MemCrit)
 		lines = append(lines, name+bar+pct)
 	}
@@ -247,7 +251,9 @@ func (m *Model) procView(innerW, maxRows int) []string {
 
 	nameW := max(10, innerW-38)
 	for _, p := range procs[:min(len(procs), max(0, maxRows))] {
-		cpuStyle := m.th.Value(m.cfg.Thresholds.CPUWarn, m.cfg.Thresholds.CPUCrit, min(p.CPU, 100))
+		// CPU colored along the value ramp instead of three flat states
+		cpuColor := lipgloss.Color(m.cpuRamp.At(min(p.CPU, 100) / 100))
+		cpuStyle := lipgloss.NewStyle().Foreground(cpuColor)
 		lines = append(lines,
 			m.th.Styles.Muted.Render(fmt.Sprintf("%7d ", p.PID))+
 				fmt.Sprintf("%-9s", trunc(p.User, 9))+
@@ -376,8 +382,7 @@ func (m *Model) gpuLines(innerW, maxLines int) []string {
 	lines := []string{m.th.Styles.Muted.Render(fmt.Sprintf("%d adapters", len(gpus)))}
 	for _, g := range gpus[:min(len(gpus), max(0, maxLines-1))] {
 		barW := clampInt(innerW-42, 6, 20)
-		bar := canvas.Bar(barW, clamp01(g.Util/100),
-			m.th.Value(60, 90, g.Util), m.th.Styles.Muted) //nolint:mnd // gpu util thresholds
+		bar := canvas.GradientBar(barW, clamp01(g.Util/100), m.cpuRamp, m.th.Styles.Muted)
 		mem := ""
 		if g.MemTotal > 0 {
 			mem = fmt.Sprintf(" %s/%s", format.Bytes(g.MemUsed), format.Bytes(g.MemTotal))
@@ -408,11 +413,6 @@ func (m *Model) hotSensor() *collector.Sensor {
 // valuePct renders a percentage with threshold coloring.
 func (m *Model) valuePct(pct, warn, crit float64) string {
 	return m.th.Value(warn, crit, pct).Render(fmt.Sprintf("%.1f%%", pct))
-}
-
-// bar renders a threshold-colored usage bar.
-func (m *Model) bar(w int, pct, warn, crit float64) string {
-	return canvas.Bar(w, pct/100, m.th.Value(warn, crit, pct), m.th.Styles.Muted)
 }
 
 // totalRates sums rx/tx byte rates across interfaces.
