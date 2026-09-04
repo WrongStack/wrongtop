@@ -20,15 +20,19 @@ import (
 func (m *Model) hostView() []string {
 	h := m.snap.Host
 	loadStyle := m.th.Styles.Muted
-	if n := float64(len(m.snap.CPU.Cores)); n > 0 {
-		loadStyle = m.th.Value(n*3/4, n, h.Load[0])
+	cores := float64(len(m.snap.CPU.Cores))
+	loadMeter := ""
+	if cores > 0 {
+		loadStyle = m.th.Value(cores*3/4, cores, h.Load[0])
+		// a small meter scaled to the core count, btop-style
+		loadMeter = " " + canvas.GradientBar(8, clamp01(h.Load[0]/cores), m.cpuRamp, m.th.Styles.Muted)
 	}
 	lines := []string{
 		m.kv("NAME", h.Hostname),
 		m.kv("SYS", strings.TrimSpace(h.Platform+" "+h.Arch)),
 		m.kv("KERNEL", trunc(h.Kernel, 18)),
 		m.kv("UPTIME", format.Uptime(h.Uptime)),
-		m.kv("LOAD", loadStyle.Render(fmt.Sprintf("%.2f %.2f %.2f", h.Load[0], h.Load[1], h.Load[2]))),
+		m.kv("LOAD", loadStyle.Render(fmt.Sprintf("%.2f %.2f %.2f", h.Load[0], h.Load[1], h.Load[2]))+loadMeter),
 		m.kv("PROCS", strconv.Itoa(h.Procs)),
 	}
 	if h.Users > 0 {
@@ -199,8 +203,14 @@ func (m *Model) netView(maxIface int) []string {
 		return ifaces[i].RxRate+ifaces[i].TxRate > ifaces[j].RxRate+ifaces[j].TxRate
 	})
 	for _, n := range ifaces[:min(len(ifaces), max(0, maxIface))] {
+		spark := canvas.Sparkline(m.netHist[n.Name], m.ioRamp)
+		total := n.RxRate + n.TxRate
+		style := m.th.Styles.OK // green for download-dominated
+		if n.TxRate > n.RxRate {
+			style = m.th.Styles.Title // upload-dominated
+		}
 		lines = append(lines, m.th.Styles.Muted.Render(fmt.Sprintf("%-8s", trunc(n.Name, 8)))+
-			fmt.Sprintf("↓%s ↑%s", shortRate(n.RxRate), shortRate(n.TxRate)))
+			spark+" "+style.Render(shortRate(total)))
 	}
 	return lines
 }
@@ -334,17 +344,18 @@ func (m *Model) alertsView() string {
 	if len(al) == 0 {
 		return ""
 	}
-	texts := make([]string, len(al))
-	crit := false
+	pal := m.th.Palette
+	chips := make([]string, len(al))
 	for i, a := range al {
-		texts[i] = a.Text
-		crit = crit || a.Crit
+		bg := pal.Yellow
+		if a.Crit {
+			bg = pal.Red
+		}
+		chips[i] = lipgloss.NewStyle().Background(lipgloss.Color(bg)).
+			Foreground(lipgloss.Color(pal.BG)).Bold(true).
+			Padding(0, 1).Render("⚠ " + a.Text)
 	}
-	style := m.th.Styles.Warn
-	if crit {
-		style = m.th.Styles.Crit
-	}
-	return style.Render("⚠ " + strings.Join(texts, " · "))
+	return strings.Join(chips, " ")
 }
 
 // sensorsLine renders every reported temperature on one line, hottest

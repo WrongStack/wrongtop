@@ -37,6 +37,9 @@ type Model struct {
 	snap collector.Snapshot
 	live bool // at least one snapshot received
 
+	// per-interface total-rate history for the network panel sparklines
+	netHist map[string][]float64
+
 	density int // 0 full, 1 compact (fewer graphs), 2 minimal (HOST+CPU)
 
 	// value ramps for the gradient meters, derived from the theme
@@ -66,6 +69,7 @@ func New(cfg *config.Config, th *theme.Theme) *Model {
 		cfg:       cfg,
 		th:        th,
 		density:   density,
+		netHist:   make(map[string][]float64),
 		cpuGraph:  canvas.New(60, 3, ramp(th, th.Palette.Green, th.Palette.Yellow, th.Palette.Orange, th.Palette.Red)),
 		memGraph:  canvas.New(28, 2, ramp(th, th.Palette.Blue, th.Palette.Purple, th.Palette.Red)),
 		swapGraph: canvas.New(28, 1, ramp(th, th.Palette.Purple, th.Palette.Red)),
@@ -156,6 +160,7 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 	case collector.SnapshotMsg:
 		m.snap = msg.Snap
 		m.live = true
+		m.recordNet()
 
 		rx, tx := totalRates(m.snap.Nets)
 		m.cpuGraph.Push(clamp01(m.snap.CPU.Percent / 100))
@@ -172,6 +177,22 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 		return nil
 	}
 	return nil
+}
+
+// netSparkSamples is the history length of the per-interface sparklines
+// in the NETWORK panel.
+const netSparkSamples = 10
+
+// recordNet appends one total-rate sample per interface for the panel
+// sparklines.
+func (m *Model) recordNet() {
+	for _, n := range m.snap.Nets {
+		h := append(m.netHist[n.Name], n.RxRate+n.TxRate)
+		if len(h) > netSparkSamples {
+			h = h[len(h)-netSparkSamples:]
+		}
+		m.netHist[n.Name] = h
+	}
 }
 
 // View implements ui.Tab.

@@ -26,6 +26,7 @@ type Model struct {
 	table         table.Model
 	io            table.Model
 	focus         int // 0 = filesystem table, 1 = io table
+	usageRamp     canvas.Ramp
 
 	disks   []collector.Disk
 	diskIOs []collector.DiskIO
@@ -38,14 +39,23 @@ func New(cfg *config.Config, th *theme.Theme) *Model {
 	io := table.New(table.WithFocused(false), table.WithWidth(100), table.WithHeight(8))
 	t.SetColumns(usageColumns(100)) // sane defaults until SetSize arrives
 	io.SetColumns(ioColumns(100))
-	return &Model{cfg: cfg, th: th, table: t, io: io}
+	return &Model{
+		cfg:       cfg,
+		th:        th,
+		table:     t,
+		io:        io,
+		usageRamp: canvas.Ramp{th.Palette.Green, th.Palette.Yellow, th.Palette.Orange, th.Palette.Red},
+	}
 }
 
 // Title implements ui.Tab.
 func (m *Model) Title() string { return "▤ DISKS" }
 
 // SetTheme implements ui.Tab.
-func (m *Model) SetTheme(th *theme.Theme) { m.th = th }
+func (m *Model) SetTheme(th *theme.Theme) {
+	m.th = th
+	m.usageRamp = canvas.Ramp{th.Palette.Green, th.Palette.Yellow, th.Palette.Orange, th.Palette.Red}
+}
 
 // SetSize implements ui.Tab.
 func (m *Model) SetSize(width, height int) {
@@ -135,7 +145,7 @@ func (m *Model) rebuild() {
 			trunc(d.Device, 16),
 			trunc(d.Mountpoint, 26),
 			trunc(d.FSType, 8),
-			style.Render(canvas.Bar(14, d.Percent/100, style, m.th.Styles.Muted)),
+			style.Render(canvas.GradientBar(14, d.Percent/100, m.usageRamp, m.th.Styles.Muted)),
 			fmt.Sprintf("%7s", format.Bytes(d.Used)),
 			fmt.Sprintf("%7s", format.Bytes(d.Total)),
 			style.Render(fmt.Sprintf("%4.0f%%", d.Percent)),

@@ -19,6 +19,7 @@ import (
 	"github.com/ersinkoc/wrongtop/internal/format"
 	"github.com/ersinkoc/wrongtop/internal/theme"
 	"github.com/ersinkoc/wrongtop/internal/ui"
+	"github.com/ersinkoc/wrongtop/internal/ui/canvas"
 )
 
 // dockerLogLines caps the in-memory log buffer.
@@ -31,6 +32,7 @@ type Model struct {
 
 	width, height int
 	table         table.Model
+	cpuRamp       canvas.Ramp
 
 	client *dockerclient.Client
 	cons   []dockerclient.Container
@@ -49,14 +51,22 @@ type Model struct {
 func New(cfg *config.Config, th *theme.Theme) *Model {
 	t := table.New(table.WithFocused(true), table.WithWidth(100), table.WithHeight(18))
 	t.SetColumns(columns(100)) // sane defaults until SetSize arrives
-	return &Model{cfg: cfg, th: th, table: t}
+	return &Model{
+		cfg:     cfg,
+		th:      th,
+		table:   t,
+		cpuRamp: canvas.Ramp{th.Palette.Green, th.Palette.Yellow, th.Palette.Orange, th.Palette.Red},
+	}
 }
 
 // Title implements ui.Tab.
 func (m *Model) Title() string { return "▣ DOCKER" }
 
 // SetTheme implements ui.Tab.
-func (m *Model) SetTheme(th *theme.Theme) { m.th = th }
+func (m *Model) SetTheme(th *theme.Theme) {
+	m.th = th
+	m.cpuRamp = canvas.Ramp{th.Palette.Green, th.Palette.Yellow, th.Palette.Orange, th.Palette.Red}
+}
 
 // SetSize implements ui.Tab.
 func (m *Model) SetSize(width, height int) {
@@ -259,6 +269,9 @@ func (m *Model) waitForLog() tea.Cmd {
 
 func (m *Model) rebuild() {
 	rows := make([]table.Row, len(m.cons))
+	cpuStyle := func(v float64) lipgloss.Style {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(m.cpuRamp.At(min(v, 100) / 100)))
+	}
 	for i, c := range m.cons {
 		state := m.th.Styles.Muted.Render(c.State)
 		switch c.State {
@@ -269,13 +282,14 @@ func (m *Model) rebuild() {
 		case "paused":
 			state = m.th.Styles.Warn.Render(c.State)
 		}
+		memPct := m.th.Value(m.cfg.Thresholds.MemWarn, m.cfg.Thresholds.MemCrit, c.MemPct)
 		rows[i] = table.Row{
 			c.Name,
 			trunc(c.Image, 32),
 			state,
-			fmt.Sprintf("%5.1f", c.CPU),
+			cpuStyle(c.CPU).Render(fmt.Sprintf("%5.1f", c.CPU)),
 			fmt.Sprintf("%10s", format.Bytes(c.Mem)),
-			fmt.Sprintf("%4.0f%%", c.MemPct),
+			memPct.Render(fmt.Sprintf("%4.0f%%", c.MemPct)),
 			fmt.Sprintf("%9s / %-9s", format.Bytes(c.NetRx), format.Bytes(c.NetTx)),
 			fmt.Sprintf("%9s / %-9s", format.Bytes(c.BlkR), format.Bytes(c.BlkW)),
 			trunc(c.Status, 22),

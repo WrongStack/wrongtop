@@ -16,6 +16,7 @@ import (
 	"github.com/ersinkoc/wrongtop/internal/format"
 	"github.com/ersinkoc/wrongtop/internal/theme"
 	"github.com/ersinkoc/wrongtop/internal/ui"
+	"github.com/ersinkoc/wrongtop/internal/ui/canvas"
 )
 
 // Model is the network tab.
@@ -27,20 +28,37 @@ type Model struct {
 	table         table.Model
 	nets          []collector.NetIface
 	live          bool
+
+	// per-interface total-rate history for the sparkline column
+	hist map[string][]float64
+	ramp canvas.Ramp
 }
+
+// sparkSamples is how many history points feed each sparkline, and the
+// width of the ACTIVITY column in cells.
+const sparkSamples = 20
 
 // New builds the network tab.
 func New(cfg *config.Config, th *theme.Theme) *Model {
 	t := table.New(table.WithFocused(true), table.WithWidth(100), table.WithHeight(20))
 	t.SetColumns(columns(100)) // sane defaults until SetSize arrives
-	return &Model{cfg: cfg, th: th, table: t}
+	return &Model{
+		cfg:   cfg,
+		th:    th,
+		table: t,
+		hist:  make(map[string][]float64),
+		ramp:  canvas.Ramp{th.Palette.Cyan, th.Palette.Green, th.Palette.Yellow, th.Palette.Red},
+	}
 }
 
 // Title implements ui.Tab.
 func (m *Model) Title() string { return "⇅ NETWORK" }
 
 // SetTheme implements ui.Tab.
-func (m *Model) SetTheme(th *theme.Theme) { m.th = th }
+func (m *Model) SetTheme(th *theme.Theme) {
+	m.th = th
+	m.ramp = canvas.Ramp{th.Palette.Cyan, th.Palette.Green, th.Palette.Yellow, th.Palette.Red}
+}
 
 // SetSize implements ui.Tab.
 func (m *Model) SetSize(width, height int) {
@@ -56,6 +74,7 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 	case collector.SnapshotMsg:
 		m.nets = msg.Snap.Nets
 		m.live = true
+		m.record()
 		m.rebuild()
 		return nil
 
@@ -83,6 +102,19 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 	return nil
 }
 
+// record appends one total-rate sample per interface, keeping the last
+// sparkSamples points. Interfaces that disappear keep their history so
+// a bounce (vpn0 down/up) does not blank the sparkline.
+func (m *Model) record() {
+	for _, n := range m.nets {
+		h := append(m.hist[n.Name], n.RxRate+n.TxRate)
+		if len(h) > sparkSamples {
+			h = h[len(h)-sparkSamples:]
+		}
+		m.hist[n.Name] = h
+	}
+}
+
 // rebuild sorts interfaces by current activity (busiest first) and
 // refreshes rows.
 func (m *Model) rebuild() {
@@ -100,6 +132,7 @@ func (m *Model) rebuild() {
 			m.th.Styles.Warn.Render(fmt.Sprintf("%10s", format.Rate(n.TxRate))),
 			fmt.Sprintf("%11s", format.Bytes(n.RxTotal)),
 			fmt.Sprintf("%11s", format.Bytes(n.TxTotal)),
+			canvas.Sparkline(m.hist[n.Name], m.ramp),
 		}
 	}
 	m.table.SetRows(rows)
@@ -141,6 +174,7 @@ func columns(width int) []table.Column {
 		{Title: "TX/s", Width: 10},
 		{Title: "TOTAL RX", Width: 11},
 		{Title: "TOTAL TX", Width: 11},
+		{Title: "ACTIVITY", Width: sparkSamples},
 	}
 }
 

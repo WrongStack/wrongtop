@@ -68,22 +68,37 @@ func (m *Model) killKey() string { return strings.ToLower(m.cfg.Keys.Kill) }
 // forceKey returns the force-kill variant of the terminate key.
 func (m *Model) forceKey() string { return strings.ToUpper(m.killKey()) }
 
-// helpView renders the help overlay box.
+// helpView renders the help overlay box: two columns so everything fits
+// without scrolling on smaller terminals.
 func (m *Model) helpView() string {
 	st := m.theme.Styles
-	var b strings.Builder
-	for i, sec := range m.helpSections() {
-		if i > 0 {
-			b.WriteString("\n\n")
+	secs := m.helpSections()
+	render := func(secs []helpSection) string {
+		var b strings.Builder
+		for i, sec := range secs {
+			if i > 0 {
+				b.WriteString("\n\n")
+			}
+			b.WriteString(st.Title.Render(sec.title))
+			for _, l := range sec.lines {
+				key, desc, _ := strings.Cut(l, "  ")
+				key = strings.TrimSpace(key)
+				desc = strings.TrimSpace(desc)
+				b.WriteString("\n  " + st.HelpKey.Render(pad(key, 10)) + st.HelpText.Render(desc))
+			}
 		}
-		b.WriteString(st.Title.Render(sec.title))
-		for _, l := range sec.lines {
-			key, desc, _ := strings.Cut(l, "  ")
-			key = strings.TrimSpace(key)
-			desc = strings.TrimSpace(desc)
-			b.WriteString("\n  " + st.HelpKey.Render(pad(key, 10)) + st.HelpText.Render(desc))
-		}
+		return b.String()
 	}
+	split := (len(secs) + 1) / 2
+	left := render(secs[:split])
+	right := render(secs[split:])
+	body := lipgloss.JoinHorizontal(lipgloss.Top,
+		left,
+		strings.Repeat(" ", 6),
+		right,
+	)
+	b := &strings.Builder{}
+	b.WriteString(body)
 	b.WriteString("\n\n  " + st.HelpKey.Render("esc") + st.HelpText.Render(" close"))
 	return ui.Box(lipgloss.RoundedBorder(), st.Border, st.BorderChar, st.BorderTitle,
 		"WRONGTOP HELP", b.String())
