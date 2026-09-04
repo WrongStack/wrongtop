@@ -132,7 +132,7 @@ func (m *Model) rebuild() {
 			m.th.Styles.Warn.Render(fmt.Sprintf("%10s", format.Rate(n.TxRate))),
 			fmt.Sprintf("%11s", format.Bytes(n.RxTotal)),
 			fmt.Sprintf("%11s", format.Bytes(n.TxTotal)),
-			canvas.Sparkline(m.hist[n.Name], m.ramp),
+			canvas.SparklineScaled(m.hist[n.Name], m.ramp),
 		}
 	}
 	m.table.SetRows(rows)

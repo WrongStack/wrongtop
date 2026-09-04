@@ -81,7 +81,9 @@ func (m *Model) cpuView(innerW, maxLines int) []string {
 	pct := m.th.Value(m.cfg.Thresholds.CPUWarn, m.cfg.Thresholds.CPUCrit, c.Percent).
 		Render(fmt.Sprintf("%.1f%%", c.Percent))
 	head := m.th.Styles.Muted.Render("TOTAL ") + pct
-	if c.FreqMHz > 0 {
+	// gopsutil reports garbage sub-100MHz clocks on Apple Silicon; a real
+	// core never idles below ~800MHz, so hide anything under 200.
+	if c.FreqMHz >= 200 { //nolint:mnd // plausibility floor
 		head += m.th.Styles.Muted.Render(fmt.Sprintf("  %.1fGHz", c.FreqMHz/1000))
 	}
 	if s := m.hotSensor(); s != nil {
@@ -157,11 +159,14 @@ func (m *Model) perCoreView(innerW, maxRows int) string {
 
 	out := make([]string, 0, rows+1)
 	for r := 0; r < rows; r++ {
-		var cells []string
+		cells := make([]string, 0, perRow*2-1)
 		for c := 0; c < perRow; c++ {
 			i := r*perRow + c
 			if i >= shown {
 				break
+			}
+			if c > 0 {
+				cells = append(cells, " ") // keep neighbors from running together
 			}
 			cells = append(cells, m.coreBar(i, m.snap.CPU.Cores[i]))
 		}
@@ -270,7 +275,7 @@ func (m *Model) netView(maxIface int) []string {
 		return ifaces[i].RxRate+ifaces[i].TxRate > ifaces[j].RxRate+ifaces[j].TxRate
 	})
 	for _, n := range ifaces[:min(len(ifaces), max(0, maxIface))] {
-		spark := canvas.Sparkline(m.netHist[n.Name], m.ioRamp)
+		spark := canvas.SparklineScaled(m.netHist[n.Name], m.ioRamp)
 		total := n.RxRate + n.TxRate
 		style := m.th.Styles.OK // green for download-dominated
 		if n.TxRate > n.RxRate {
@@ -315,7 +320,7 @@ func (m *Model) diskView(innerW, maxRows int) []string {
 		mount := trunc(filepath.Base(d.Mountpoint), 9)
 		name := m.th.Styles.Muted.Render(fmt.Sprintf("%-9s", mount))
 		bar := canvas.GradientBar(barW, d.Percent/100, m.memRamp, m.th.Styles.Muted)
-		spark := canvas.Sparkline(m.ioHist[filepath.Base(d.Device)], m.ioRamp)
+		spark := canvas.SparklineScaled(m.ioHist[filepath.Base(d.Device)], m.ioRamp)
 		pct := m.valuePct(d.Percent, m.cfg.Thresholds.MemWarn, m.cfg.Thresholds.MemCrit)
 		lines = append(lines, name+bar+pct+spark)
 	}
@@ -406,8 +411,8 @@ func EvaluateAlerts(cfg *config.Config, snap collector.Snapshot) []Alert {
 		}
 	}
 	if worst != nil {
-		pct("disk:"+worst.Mountpoint, "DISK "+filepath.Base(worst.Mountpoint),
-			t.MemWarn, t.MemCrit, worst.Percent)
+		label := trunc(filepath.Base(worst.Mountpoint), 12) // APFS volume names run long
+		pct("disk:"+worst.Mountpoint, "DISK "+label, t.MemWarn, t.MemCrit, worst.Percent)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Crit && !out[j].Crit })
 	return out

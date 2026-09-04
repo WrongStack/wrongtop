@@ -100,3 +100,21 @@ func Sparkline(values []float64, ramp Ramp) string {
 	}
 	return sb.String()
 }
+
+// SparklineScaled renders raw-rate samples (any magnitude) as one row of
+// block glyphs, scaling the window so its tallest sample fills the full
+// height — the btop activity look. All-zero windows render as blanks.
+func SparklineScaled(values []float64, ramp Ramp) string {
+	peak := 0.0
+	for _, v := range values {
+		peak = max(peak, v)
+	}
+	if peak <= 0 {
+		return strings.Repeat(string(sparkBlocks[0]), len(values))
+	}
+	scaled := make([]float64, len(values))
+	for i, v := range values {
+		scaled[i] = v / peak
+	}
+	return Sparkline(scaled, ramp)
+}
