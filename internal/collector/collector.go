@@ -50,6 +50,7 @@ type Collector struct {
 	lastSlow      time.Time
 	cachedFreq    float64
 	cachedSensors []Sensor
+	cachedFans    []Fan
 	cachedBattery *Battery
 }
 
@@ -72,7 +73,7 @@ func (c *Collector) Collect(ctx context.Context) Snapshot {
 		elapsed = 0
 	}
 
-	freq, sensors, battery := c.collectSlow(ctx, now)
+	freq, sensors, fans, battery := c.collectSlow(ctx, now)
 	cpu := collectCPU(ctx)
 	cpu.FreqMHz = freq
 	mem := collectMem(ctx)
@@ -83,6 +84,7 @@ func (c *Collector) Collect(ctx context.Context) Snapshot {
 		CPU:     cpu,
 		Mem:     mem,
 		Sensors: sensors,
+		Fans:    fans,
 		Battery: battery,
 		Procs:   c.collectProcs(ctx, elapsed, mem.Total),
 		Disks:   c.collectDisks(ctx),
@@ -91,9 +93,9 @@ func (c *Collector) Collect(ctx context.Context) Snapshot {
 	}
 }
 
-// collectSlow returns frequency, temperatures and battery state, reading
-// them from cache unless the slow interval has elapsed.
-func (c *Collector) collectSlow(ctx context.Context, now time.Time) (float64, []Sensor, *Battery) {
+// collectSlow returns frequency, temperatures, fans and battery state,
+// reading them from cache unless the slow interval has elapsed.
+func (c *Collector) collectSlow(ctx context.Context, now time.Time) (float64, []Sensor, []Fan, *Battery) {
 	c.slowMu.Lock()
 	defer c.slowMu.Unlock()
 
@@ -105,9 +107,10 @@ func (c *Collector) collectSlow(ctx context.Context, now time.Time) (float64, []
 		c.lastSlow = now
 		c.cachedFreq = collectFreq(ctx)
 		c.cachedSensors = collectSensors(ctx)
+		c.cachedFans = readFans()
 		c.cachedBattery = readBattery(ctx)
 	}
-	return c.cachedFreq, c.cachedSensors, c.cachedBattery
+	return c.cachedFreq, c.cachedSensors, c.cachedFans, c.cachedBattery
 }
 
 func (c *Collector) collectHost(ctx context.Context) Host {
@@ -162,8 +165,21 @@ var sensorHints = []string{"cpu", "core", "thermal", "package", "k10temp", "acpi
 
 // collectSensors returns CPU-relevant temperature readings, hottest
 // first, capped at a handful. Readings of 0°C (missing data) are dropped;
-// an empty result means the platform exposes nothing useful.
+// an empty result means the platform exposes nothing useful. When
+// gopsutil yields nothing the platform hook gets a chance (AppleSMC on
+// darwin, ACPI thermal zones on windows).
 func collectSensors(ctx context.Context) []Sensor {
+	out := gopsutilSensors(ctx)
+	if len(out) == 0 {
+		out = platformTemps(ctx)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].TempC > out[j].TempC })
+	return out[:min(len(out), 4)]
+}
+
+// gopsutilSensors collects CPU-relevant temperatures via gopsutil,
+// matching sensor names against the hints above.
+func gopsutilSensors(ctx context.Context) []Sensor {
 	temps, err := sensors.TemperaturesWithContext(ctx)
 	if err != nil && len(temps) == 0 {
 		return nil
@@ -186,8 +202,7 @@ func collectSensors(ctx context.Context) []Sensor {
 		}
 		out = append(out, Sensor{Name: s.SensorKey, TempC: s.Temperature})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].TempC > out[j].TempC })
-	return out[:min(len(out), 4)]
+	return out
 }
 
 // collectFreq returns the average current CPU clock in MHz, or 0 when the

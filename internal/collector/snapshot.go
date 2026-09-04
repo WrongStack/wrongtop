@@ -17,6 +17,7 @@ type Snapshot struct {
 	CPU     CPU        `json:"cpu"`
 	Mem     Mem        `json:"mem"`
 	Sensors []Sensor   `json:"sensors,omitempty"`
+	Fans    []Fan      `json:"fans,omitempty"`
 	Battery *Battery   `json:"battery,omitempty"`
 	Procs   []Proc     `json:"procs,omitempty"`
 	Disks   []Disk     `json:"disks,omitempty"`
@@ -63,6 +64,13 @@ type CPU struct {
 type Sensor struct {
 	Name  string  `json:"name"`
 	TempC float64 `json:"temp_c"`
+}
+
+// Fan is one cooling fan reading; RPM is 0 when the platform does not
+// report it.
+type Fan struct {
+	Name string  `json:"name"`
+	RPM  float64 `json:"rpm"`
 }
 
 // Battery is the main battery state; a nil pointer means the machine has

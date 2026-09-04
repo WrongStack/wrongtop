@@ -42,6 +42,18 @@ func (m *Model) hostView() []string {
 		}
 		lines = append(lines, m.kv("BATTERY", fmt.Sprintf("%.0f%% (%s)", b.Percent, state)))
 	}
+	if len(m.snap.Fans) > 0 {
+		fans := m.snap.Fans[:min(len(m.snap.Fans), 2)]
+		vals := make([]string, len(fans))
+		for i, f := range fans {
+			vals[i] = fmt.Sprintf("%.0frpm", f.RPM)
+		}
+		row := strings.Join(vals, " · ")
+		if extra := len(m.snap.Fans) - len(fans); extra > 0 {
+			row += m.th.Styles.Muted.Render(fmt.Sprintf("  +%d", extra))
+		}
+		lines = append(lines, m.kv("FANS", row))
+	}
 	return lines
 }
 
