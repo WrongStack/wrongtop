@@ -13,6 +13,7 @@ import (
 	"github.com/ersinkoc/wrongtop/internal/config"
 	"github.com/ersinkoc/wrongtop/internal/format"
 	"github.com/ersinkoc/wrongtop/internal/theme"
+	"github.com/ersinkoc/wrongtop/internal/ui"
 	"github.com/ersinkoc/wrongtop/internal/ui/canvas"
 )
 
@@ -24,6 +25,7 @@ type Model struct {
 	width, height int
 	table         table.Model
 	io            table.Model
+	focus         int // 0 = filesystem table, 1 = io table
 
 	disks   []collector.Disk
 	diskIOs []collector.DiskIO
@@ -66,15 +68,60 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 
 	case tea.MouseWheelMsg:
 		mouse := msg.Mouse()
+		t := &m.table
+		if mouse.Y-6-m.table.Height() >= 0 { // pointer is over the io table
+			t = &m.io
+		}
 		switch mouse.Button {
 		case tea.MouseWheelUp:
-			m.table.MoveUp(3)
+			t.MoveUp(3)
 		case tea.MouseWheelDown:
-			m.table.MoveDown(3)
+			t.MoveDown(3)
+		}
+		return nil
+
+	case tea.MouseClickMsg:
+		mouse := msg.Mouse()
+		if mouse.Button != tea.MouseLeft {
+			return nil
+		}
+		// window rows: 0 tab bar, 1 fs header, 2 table header, 3+ fs data,
+		// then a blank + io header + io table header before io data
+		if row := mouse.Y - 3; row >= 0 && row < m.table.Height() {
+			if idx := ui.ClickedRowIndex(m.table, row); idx >= 0 {
+				m.table.SetCursor(idx)
+				m.focus = 0
+			}
+			return nil
+		}
+		if row := mouse.Y - 6 - m.table.Height(); row >= 0 {
+			if idx := ui.ClickedRowIndex(m.io, row); idx >= 0 {
+				m.io.SetCursor(idx)
+				m.focus = 1
+			}
+		}
+		return nil
+
+	case tea.KeyPressMsg:
+		switch msg.String() {
+		case "up":
+			m.focusedTable().MoveUp(1)
+		case "down":
+			m.focusedTable().MoveDown(1)
+		case "left", "right":
+			m.focus = 1 - m.focus
 		}
 		return nil
 	}
 	return nil
+}
+
+// focusedTable returns the table currently under keyboard control.
+func (m *Model) focusedTable() *table.Model {
+	if m.focus == 1 {
+		return &m.io
+	}
+	return &m.table
 }
 
 func (m *Model) rebuild() {
@@ -114,7 +161,12 @@ func (m *Model) View() string {
 	}
 	st := m.th.Styles
 	head := st.BorderTitle.Render(" FILESYSTEMS ")
-	ioHead := st.BorderTitle.Render(" I/O RATES ")
+	ioHead := st.Muted.Render(" I/O RATES ")
+	if m.focus == 1 {
+		head = st.Muted.Render(" FILESYSTEMS ")
+		ioHead = st.BorderTitle.Render(" I/O RATES ")
+	}
+	ioHead += st.Muted.Render("  ←→ table  ↑↓ scroll")
 	if !m.live {
 		head += st.Muted.Render("  waiting for samples…")
 	}

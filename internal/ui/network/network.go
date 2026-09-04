@@ -15,6 +15,7 @@ import (
 	"github.com/ersinkoc/wrongtop/internal/config"
 	"github.com/ersinkoc/wrongtop/internal/format"
 	"github.com/ersinkoc/wrongtop/internal/theme"
+	"github.com/ersinkoc/wrongtop/internal/ui"
 )
 
 // Model is the network tab.
@@ -62,6 +63,17 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 			m.table.MoveUp(3)
 		case tea.MouseWheelDown:
 			m.table.MoveDown(3)
+		}
+		return nil
+
+	case tea.MouseClickMsg:
+		mouse := msg.Mouse()
+		if mouse.Button != tea.MouseLeft {
+			return nil
+		}
+		// window rows: 0 tab bar, 1 head line, 2 table header, 3+ data
+		if idx := ui.ClickedRowIndex(m.table, mouse.Y-3); idx >= 0 {
+			m.table.SetCursor(idx)
 		}
 		return nil
 	}

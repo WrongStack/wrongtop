@@ -8,49 +8,64 @@ import (
 	"github.com/ersinkoc/wrongtop/internal/ui"
 )
 
-// helpSections is the full help overlay content, grouped per tab.
-var helpSections = []struct {
+// helpSection is one titled group of "key  description" lines in the
+// help overlay.
+type helpSection struct {
 	title string
 	lines []string
-}{
-	{
-		title: "GLOBAL",
-		lines: []string{
-			"1-5        jump to tab",
-			"tab        next tab (shift+tab back)",
-			"q / ctrl+c quit",
-			"?          toggle this help",
-			"mouse      scroll lists",
-		},
-	},
-	{
-		title: "PROCESSES",
-		lines: []string{
-			"/          filter by name, user or pid",
-			"s          cycle sort column",
-			"S          reverse sort order",
-			"k          terminate (SIGTERM)",
-			"K          force kill (SIGKILL)",
-			"up/down    move selection",
-		},
-	},
-	{
-		title: "DOCKER",
-		lines: []string{
-			"enter      follow container logs",
-			"s          start container",
-			"t          stop container",
-			"r          restart container",
-			"esc        back from logs",
-		},
-	},
 }
+
+// helpSections builds the help overlay content for the current config so
+// overridden key bindings render as configured. Each line is "key  desc";
+// helpView splits on the first double space.
+func (m *Model) helpSections() []helpSection {
+	return []helpSection{
+		{
+			title: "GLOBAL",
+			lines: []string{
+				"1-5        jump to tab",
+				"tab        next tab (shift+tab back)",
+				"q / ctrl+c quit",
+				"?          toggle this help",
+				"mouse      scroll and click lists",
+			},
+		},
+		{
+			title: "PROCESSES",
+			lines: []string{
+				m.cfg.Keys.Filter + "          filter by name, user or pid",
+				"s          cycle sort column",
+				"S          reverse sort order",
+				m.killKey() + "          terminate (SIGTERM)",
+				m.forceKey() + "          force kill (SIGKILL)",
+				"up/down    move selection",
+			},
+		},
+		{
+			title: "DOCKER",
+			lines: []string{
+				"enter      follow container logs",
+				"s          start container",
+				"t          stop container",
+				"r          restart container",
+				"esc        back from logs",
+			},
+		},
+	}
+}
+
+// killKey returns the configured terminate key, lowercased; its uppercase
+// variant force-kills.
+func (m *Model) killKey() string { return strings.ToLower(m.cfg.Keys.Kill) }
+
+// forceKey returns the force-kill variant of the terminate key.
+func (m *Model) forceKey() string { return strings.ToUpper(m.killKey()) }
 
 // helpView renders the help overlay box.
 func (m *Model) helpView() string {
 	st := m.theme.Styles
 	var b strings.Builder
-	for i, sec := range helpSections {
+	for i, sec := range m.helpSections() {
 		if i > 0 {
 			b.WriteString("\n\n")
 		}

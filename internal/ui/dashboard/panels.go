@@ -61,6 +61,9 @@ func (m *Model) cpuView(innerW, maxLines int) []string {
 	}
 
 	lines := []string{head}
+	if sl := m.sensorsLine(innerW); sl != "" {
+		lines = append(lines, sl)
+	}
 	lines = append(lines, strings.Split(m.cpuGraph.View(), "\n")...)
 
 	graphH := len(lines) // head + graph rows; per-core rows fill the rest
@@ -292,6 +295,31 @@ func (m *Model) alertsView() string {
 		style = m.th.Styles.Crit
 	}
 	return style.Render("⚠ " + strings.Join(texts, " · "))
+}
+
+// sensorsLine renders every reported temperature on one line, hottest
+// first, each value threshold-colored. The hottest reading already shows
+// in the panel head and the host panel, so the line only appears when a
+// second sensor exists. Width-bounded to the panel.
+func (m *Model) sensorsLine(maxW int) string {
+	if len(m.snap.Sensors) < 2 {
+		return ""
+	}
+	line := m.th.Styles.Muted.Render("SENS ")
+	for i, s := range m.snap.Sensors {
+		style := m.th.Value(m.cfg.Thresholds.TempWarn, m.cfg.Thresholds.TempCrit, s.TempC)
+		cell := style.Render(fmt.Sprintf("%.0f°", s.TempC)) +
+			m.th.Styles.Muted.Render(" "+trunc(s.Name, 10))
+		sep := ""
+		if i > 0 {
+			sep = m.th.Styles.Muted.Render(" · ")
+		}
+		if lipgloss.Width(line)+lipgloss.Width(sep)+lipgloss.Width(cell) > maxW {
+			break
+		}
+		line += sep + cell
+	}
+	return line
 }
 
 // hotSensor returns the hottest reported sensor, if any.

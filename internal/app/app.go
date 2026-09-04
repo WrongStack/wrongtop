@@ -167,7 +167,24 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if cmd, handled := m.globalKey(msg); handled {
 			return m, cmd
 		}
+		if m.helpMode {
+			return m, nil // the help overlay swallows other keys
+		}
 		return m, m.tabs[m.active].Update(msg)
+
+	case tea.MouseClickMsg:
+		mouse := msg.Mouse()
+		if mouse.Y == 0 { // tab bar row
+			if mouse.Button == tea.MouseLeft {
+				if n, ok := m.tabAt(mouse.X); ok {
+					m.active = n
+				}
+			}
+			return m, nil
+		}
+		if !m.helpMode {
+			return m, m.tabs[m.active].Update(msg)
+		}
 	}
 
 	return m, m.tabs[m.active].Update(msg)
@@ -227,6 +244,21 @@ func (m *Model) helpOverlay(content string) string {
 	)
 }
 
+// tabAt resolves a click on the tab bar row to a tab index. Tab styles
+// pad each label with one blank column on either side.
+func (m *Model) tabAt(x int) (int, bool) {
+	start := 0
+	for i, t := range m.tabs {
+		w := lipgloss.Width(t.Title()) + 2
+		if x >= start && x < start+w {
+			return i, true
+		}
+		start += w
+	}
+	return 0, false
+}
+
+// tabBarView renders the tab strip.
 func (m *Model) tabBarView() string {
 	parts := make([]string, len(m.tabs))
 	for i, t := range m.tabs {

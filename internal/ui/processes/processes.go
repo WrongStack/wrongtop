@@ -96,6 +96,17 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 		}
 		return nil
 
+	case tea.MouseClickMsg:
+		mouse := msg.Mouse()
+		if mouse.Button != tea.MouseLeft || m.confirm != nil || m.editing {
+			return nil
+		}
+		// window rows: 0 tab bar, 1 info line, 2 table header, 3+ data
+		if idx := ui.ClickedRowIndex(m.table, mouse.Y-3); idx >= 0 {
+			m.table.SetCursor(idx)
+		}
+		return nil
+
 	case tea.KeyPressMsg:
 		return m.key(msg)
 	}
@@ -211,6 +222,7 @@ func (m *Model) rebuild() {
 		for i, p := range m.visible {
 			if p.PID == selected {
 				m.table.SetCursor(i)
+				ui.EnsureRowVisible(&m.table, i)
 				break
 			}
 		}

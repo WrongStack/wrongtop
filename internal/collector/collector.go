@@ -75,15 +75,16 @@ func (c *Collector) Collect(ctx context.Context) Snapshot {
 	freq, sensors, battery := c.collectSlow(ctx, now)
 	cpu := collectCPU(ctx)
 	cpu.FreqMHz = freq
+	mem := collectMem(ctx)
 
 	return Snapshot{
 		Time:    now,
 		Host:    c.collectHost(ctx),
 		CPU:     cpu,
-		Mem:     collectMem(ctx),
+		Mem:     mem,
 		Sensors: sensors,
 		Battery: battery,
-		Procs:   c.collectProcs(ctx, elapsed),
+		Procs:   c.collectProcs(ctx, elapsed, mem.Total),
 		Disks:   c.collectDisks(ctx),
 		DiskIOs: c.collectDiskIO(ctx, elapsed),
 		Nets:    c.collectNet(ctx, elapsed),
@@ -227,8 +228,9 @@ func collectMem(ctx context.Context) Mem {
 }
 
 // collectProcs lists all processes. Per-process CPU is diffed against the
-// previous poll; the first poll reports 0.
-func (c *Collector) collectProcs(ctx context.Context, elapsed float64) []Proc {
+// previous poll; the first poll reports 0. Mem is the share of physical
+// memory in use, derived locally from RSS and the host total.
+func (c *Collector) collectProcs(ctx context.Context, elapsed float64, memTotal uint64) []Proc {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -263,6 +265,7 @@ func (c *Collector) collectProcs(ctx context.Context, elapsed float64) []Proc {
 		}
 		if mi, err := p.MemoryInfoWithContext(ctx); err == nil {
 			pr.RSS = mi.RSS
+			pr.Mem = memPercent(mi.RSS, memTotal)
 		}
 		if nt, err := p.NumThreadsWithContext(ctx); err == nil {
 			pr.Threads = nt
@@ -425,6 +428,14 @@ func (c *Collector) collectNet(ctx context.Context, elapsed float64) []NetIface 
 		}
 	}
 	return out
+}
+
+// memPercent converts an RSS sample into a percent of physical memory.
+func memPercent(rss, memTotal uint64) float64 {
+	if rss == 0 || memTotal == 0 {
+		return 0
+	}
+	return float64(rss) / float64(memTotal) * 100
 }
 
 // abbrevState reduces gopsutil status strings to a single htop-style letter.

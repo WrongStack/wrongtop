@@ -18,6 +18,7 @@ import (
 	"github.com/ersinkoc/wrongtop/internal/dockerclient"
 	"github.com/ersinkoc/wrongtop/internal/format"
 	"github.com/ersinkoc/wrongtop/internal/theme"
+	"github.com/ersinkoc/wrongtop/internal/ui"
 )
 
 // dockerLogLines caps the in-memory log buffer.
@@ -37,6 +38,7 @@ type Model struct {
 
 	logFor    string // container name shown in the log pane ("" = list mode)
 	logs      []string
+	logScroll int // lines kept off the tail; 0 = follow the stream
 	logStream <-chan string
 	cancelLog context.CancelFunc
 
@@ -88,10 +90,46 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 		// channel, which would busy-loop
 		return nil
 
+	case tea.MouseWheelMsg:
+		mouse := msg.Mouse()
+		if m.logFor != "" { // scroll the log buffer
+			switch mouse.Button {
+			case tea.MouseWheelUp:
+				m.logScroll = min(m.logScroll+3, m.scrollbackMax())
+			case tea.MouseWheelDown:
+				m.logScroll = max(m.logScroll-3, 0)
+			}
+			return nil
+		}
+		switch mouse.Button {
+		case tea.MouseWheelUp:
+			m.table.MoveUp(3)
+		case tea.MouseWheelDown:
+			m.table.MoveDown(3)
+		}
+		return nil
+
+	case tea.MouseClickMsg:
+		mouse := msg.Mouse()
+		if mouse.Button != tea.MouseLeft || m.logFor != "" || m.client == nil {
+			return nil
+		}
+		// window rows: 0 tab bar, 1 head line, 2 table header, 3+ data
+		if idx := ui.ClickedRowIndex(m.table, mouse.Y-3); idx >= 0 {
+			m.table.SetCursor(idx)
+		}
+		return nil
+
 	case tea.KeyPressMsg:
 		return m.key(msg)
 	}
 	return nil
+}
+
+// scrollbackMax caps log scrolling at the top of the buffer minus one
+// screenful so the pane never renders empty.
+func (m *Model) scrollbackMax() int {
+	return max(0, len(m.logs)-(m.height-3))
 }
 
 type logLineMsg string
@@ -163,6 +201,7 @@ func (m *Model) openLogs() tea.Cmd {
 	m.cancelLog = cancel
 	m.logFor = ct.Name
 	m.logs = nil
+	m.logScroll = 0
 	lines := make(chan string, 256)
 	m.logStream = lines
 	go func() {
@@ -199,6 +238,7 @@ func (m *Model) closeLogs() {
 	}
 	m.logFor = ""
 	m.logs = nil
+	m.logScroll = 0
 	m.logStream = nil
 	m.table.SetHeight(max(3, m.height-4))
 }
@@ -250,11 +290,19 @@ func (m *Model) View() string {
 
 	if m.logFor != "" {
 		head := st.BorderTitle.Render(" LOGS · "+m.logFor+" ") +
-			st.Muted.Render(fmt.Sprintf("  %d lines  ", len(m.logs))) +
-			st.HelpKey.Render("esc") + st.HelpText.Render(" back")
-		body := m.logs
-		if maxLines := m.height - 3; len(body) > maxLines {
-			body = body[len(body)-maxLines:]
+			st.Muted.Render(fmt.Sprintf("  %d lines  ", len(m.logs)))
+		if m.logScroll > 0 {
+			head += st.Warn.Render(fmt.Sprintf("  ↑%d  ", m.logScroll))
+		}
+		head += st.HelpKey.Render("esc") + st.HelpText.Render(" back")
+		maxLines := max(1, m.height-3)
+		start := len(m.logs) - maxLines - m.logScroll
+		if start < 0 {
+			start = 0
+		}
+		body := m.logs[start:]
+		if len(body) > maxLines {
+			body = body[:maxLines]
 		}
 		return lipgloss.JoinVertical(lipgloss.Left, head, strings.Join(body, "\n"))
 	}
