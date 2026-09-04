@@ -192,6 +192,9 @@ func (m *Model) openDetail() tea.Cmd {
 	}
 	p := m.rows[cur].Proc
 	m.detail = &procDetail{proc: p}
+	if m.cfg.ReadOnly {
+		return nil // a remote view cannot look up local command lines
+	}
 	pid := p.PID
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -280,6 +283,10 @@ func killSignalIndex(sigs []procs.Signal) int {
 }
 
 func (m *Model) openConfirm(force bool) tea.Cmd {
+	if m.cfg.ReadOnly {
+		m.status = m.th.Styles.Warn.Render("read-only view — signaling disabled")
+		return nil
+	}
 	if len(m.rows) == 0 {
 		return nil
 	}

@@ -41,6 +41,7 @@ type Config struct {
 	Modules    Modules    `yaml:"modules"`
 	Thresholds Thresholds `yaml:"thresholds"`
 	Keys       Keys       `yaml:"keys"`
+	ReadOnly   bool       `yaml:"read_only,omitempty"` // no process signaling
 }
 
 // Modules toggles optional feature tabs.

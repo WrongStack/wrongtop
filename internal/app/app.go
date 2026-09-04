@@ -15,6 +15,7 @@ import (
 	"github.com/ersinkoc/wrongtop/internal/config"
 	"github.com/ersinkoc/wrongtop/internal/dockerclient"
 	"github.com/ersinkoc/wrongtop/internal/format"
+	"github.com/ersinkoc/wrongtop/internal/remote"
 	"github.com/ersinkoc/wrongtop/internal/theme"
 	"github.com/ersinkoc/wrongtop/internal/ui"
 	"github.com/ersinkoc/wrongtop/internal/ui/dashboard"
@@ -60,8 +61,44 @@ type Model struct {
 	flash      string // transient status-bar note
 	flashUntil time.Time
 
+	// remote monitoring: when stream is set, snapshots arrive from a
+	// server and local collection is disabled entirely.
+	stream     *remote.Client
+	remoteAddr string
+
 	latest collector.Snapshot // most recent sample, for the status bar
 }
+
+// NewRemote builds the root model fed by a remote snapshot stream.
+// Docker is unavailable remotely and the view is read-only.
+func NewRemote(cfg *config.Config, cfgPath, version string, stream *remote.Client, addr string) *Model {
+	cfg.Modules.Docker = false
+	m := New(cfg, cfgPath, version)
+	m.stream = stream
+	m.remoteAddr = addr
+	return m
+}
+
+// RunRemote starts the wrongtop TUI fed by a remote stream; a reader
+// goroutine pushes snapshots into the event loop.
+func RunRemote(cfg *config.Config, cfgPath, version string, stream *remote.Client, addr string) error {
+	program := tea.NewProgram(NewRemote(cfg, cfgPath, version, stream, addr))
+	go func() {
+		for {
+			snap, err := stream.Next()
+			if err != nil {
+				program.Send(remoteEndedMsg{err})
+				return
+			}
+			program.Send(collector.SnapshotMsg{Snap: snap})
+		}
+	}()
+	_, err := program.Run()
+	return err
+}
+
+// remoteEndedMsg signals that the remote stream terminated.
+type remoteEndedMsg struct{ err error }
 
 // New builds the root model with the tabs enabled by cfg.Modules.
 func New(cfg *config.Config, cfgPath, version string) *Model {
@@ -102,6 +139,9 @@ type dockerRetryMsg struct{}
 
 // Init implements tea.Model.
 func (m *Model) Init() tea.Cmd {
+	if m.stream != nil {
+		return nil // snapshots arrive from the remote reader goroutine
+	}
 	cmds := []tea.Cmd{m.tickCmd(), m.collectCmd()}
 	if m.cfg.Modules.Docker {
 		cmds = append(cmds, m.connectDockerCmd())
@@ -149,11 +189,22 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tickMsg:
+		if m.stream != nil {
+			return m, nil // remote mode: no local polling
+		}
 		cmds := []tea.Cmd{m.tickCmd(), m.collectCmd()}
 		if m.cfg.Modules.Docker && m.docker != nil {
 			cmds = append(cmds, m.dockerListCmd())
 		}
 		return m, tea.Batch(cmds...)
+
+	case remoteEndedMsg:
+		if msg.err != nil {
+			m.setFlash("remote stream ended: " + msg.err.Error())
+		} else {
+			m.setFlash("remote stream ended")
+		}
+		return m, nil
 
 	case dockerRetryMsg:
 		return m, m.connectDockerCmd()
@@ -431,6 +482,10 @@ func (m *Model) tabBarView() string {
 func (m *Model) statusBarView() string {
 	left := m.theme.Styles.Title.Render("wrongtop ") +
 		m.theme.Styles.Muted.Render("v"+m.version)
+	if m.stream != nil {
+		left += m.theme.Styles.Warn.Render("  REMOTE ") +
+			m.theme.Styles.Muted.Render(m.remoteAddr)
+	}
 
 	right := m.theme.Styles.HelpKey.Render(fmt.Sprintf("1-%d", len(m.tabs))) +
 		m.theme.Styles.HelpText.Render(" tabs  ") +
