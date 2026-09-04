@@ -14,7 +14,7 @@ import (
 
 func TestNewTabsRespectModules(t *testing.T) {
 	all := config.Default()
-	m := New(all, "test")
+	m := New(all, "", "test")
 	want := []string{"DASHBOARD", "PROCESSES", "DOCKER", "DISKS", "NETWORK"}
 	if len(m.tabs) != len(want) {
 		t.Fatalf("default modules: got %d tabs, want %d", len(m.tabs), len(want))
@@ -27,7 +27,7 @@ func TestNewTabsRespectModules(t *testing.T) {
 
 	off := config.Default()
 	off.Modules = config.Modules{}
-	m = New(off, "test")
+	m = New(off, "", "test")
 	want = []string{"DASHBOARD", "DISKS", "NETWORK"}
 	if len(m.tabs) != len(want) {
 		t.Fatalf("optional modules off: got %d tabs, want %d", len(m.tabs), len(want))
@@ -42,7 +42,7 @@ func TestNewTabsRespectModules(t *testing.T) {
 func TestStatusBarShowsDynamicTabRange(t *testing.T) {
 	cfg := config.Default()
 	cfg.Modules = config.Modules{}
-	m := New(cfg, "test")
+	m := New(cfg, "", "test")
 	m.width = 120
 	out := m.statusBarView()
 	if !strings.Contains(out, "1-3") {
@@ -54,7 +54,7 @@ func TestStatusBarShowsDynamicTabRange(t *testing.T) {
 // snapshot has arrived the bar shows cpu/mem percentages and net rates.
 func TestStatusBarLiveSummary(t *testing.T) {
 	cfg := config.Default()
-	m := New(cfg, "test")
+	m := New(cfg, "", "test")
 	m.width = 120
 
 	if out := m.statusBarView(); strings.Contains(out, "cpu") {
@@ -91,14 +91,14 @@ func flattenCmd(t *testing.T, cmd tea.Cmd) []tea.Cmd {
 
 func TestDockerLifecycleGatedByModule(t *testing.T) {
 	on := config.Default() // Modules.Docker: true
-	mOn := New(on, "test")
+	mOn := New(on, "", "test")
 	if got := flattenCmd(t, mOn.Init()); len(got) != 3 {
 		t.Errorf("Init with docker module: got %d cmds, want 3", len(got))
 	}
 
 	off := config.Default()
 	off.Modules = config.Modules{}
-	mOff := New(off, "test")
+	mOff := New(off, "", "test")
 	if got := flattenCmd(t, mOff.Init()); len(got) != 2 {
 		t.Errorf("Init without docker module: got %d cmds, want 2", len(got))
 	}

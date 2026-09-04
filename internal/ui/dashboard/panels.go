@@ -10,6 +10,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/ersinkoc/wrongtop/internal/collector"
+	"github.com/ersinkoc/wrongtop/internal/config"
 	"github.com/ersinkoc/wrongtop/internal/format"
 	"github.com/ersinkoc/wrongtop/internal/ui/canvas"
 )
@@ -81,9 +82,11 @@ func (m *Model) cpuView(innerW, maxLines int) []string {
 	}
 	lines = append(lines, strings.Split(m.cpuGraph.View(), "\n")...)
 
-	graphH := len(lines) // head + graph rows; per-core rows fill the rest
-	if coreLines := m.perCoreView(innerW, maxLines-graphH); coreLines != "" {
-		lines = append(lines, strings.Split(coreLines, "\n")...)
+	graphH := len(lines) // head (+sensors) + graph rows; per-core fills the rest
+	if m.density < densityCompact {
+		if coreLines := m.perCoreView(innerW, maxLines-graphH); coreLines != "" {
+			lines = append(lines, strings.Split(coreLines, "\n")...)
+		}
 	}
 	return lines
 }
@@ -166,9 +169,11 @@ func (m *Model) memView(innerW int) []string {
 		)
 	}
 
-	lines = append(lines, strings.Split(m.memGraph.View(), "\n")...)
-	if mem.SwapTotal > 0 {
-		lines = append(lines, strings.Split(m.swapGraph.View(), "\n")...)
+	if m.density < densityCompact { // history graphs trail, dropped first
+		lines = append(lines, strings.Split(m.memGraph.View(), "\n")...)
+		if mem.SwapTotal > 0 {
+			lines = append(lines, strings.Split(m.swapGraph.View(), "\n")...)
+		}
 	}
 	return lines
 }
@@ -255,53 +260,67 @@ func (m *Model) procView(innerW, maxRows int) []string {
 	return lines
 }
 
-// alerts collects threshold crossings, glances-style. Critical findings
-// sort before warnings so the strip leads with the worst.
-func (m *Model) alerts() []alert {
-	if !m.live {
+// Alert is one threshold crossing. Key identifies the metric so the
+// app-level alert history can track start and end of each condition.
+type Alert struct {
+	Key  string
+	Text string
+	Crit bool
+}
+
+// EvaluateAlerts collects threshold crossings, glances-style. Critical
+// findings sort before warnings so the strip leads with the worst. A
+// nil snapshot (never received one) yields no alerts.
+func EvaluateAlerts(cfg *config.Config, snap collector.Snapshot) []Alert {
+	if snap.Time.IsZero() {
 		return nil
 	}
-	t := m.cfg.Thresholds
-	var out []alert
+	t := cfg.Thresholds
+	var out []Alert
 
-	pct := func(warn, crit, v float64, label string) {
+	pct := func(key, label string, warn, crit, v float64) {
 		switch {
 		case v >= crit:
-			out = append(out, alert{crit: true, text: fmt.Sprintf("%s %.0f%%", label, v)})
+			out = append(out, Alert{key, fmt.Sprintf("%s %.0f%%", label, v), true})
 		case v >= warn:
-			out = append(out, alert{crit: false, text: fmt.Sprintf("%s %.0f%%", label, v)})
+			out = append(out, Alert{key, fmt.Sprintf("%s %.0f%%", label, v), false})
 		}
 	}
-	pct(t.CPUWarn, t.CPUCrit, m.snap.CPU.Percent, "CPU")
-	pct(t.MemWarn, t.MemCrit, m.snap.Mem.Percent, "MEM")
-	pct(t.MemWarn, t.MemCrit, m.snap.Mem.SwapPercent, "SWAP")
+	pct("cpu", "CPU", t.CPUWarn, t.CPUCrit, snap.CPU.Percent)
+	pct("mem", "MEM", t.MemWarn, t.MemCrit, snap.Mem.Percent)
+	pct("swap", "SWAP", t.MemWarn, t.MemCrit, snap.Mem.SwapPercent)
 
-	if s := m.hotSensor(); s != nil {
+	if s := hottestSensor(snap); s != nil {
+		key := "temp:" + s.Name
+		text := fmt.Sprintf("TEMP %s %.0f°C", s.Name, s.TempC)
 		switch {
 		case s.TempC >= t.TempCrit:
-			out = append(out, alert{crit: true, text: fmt.Sprintf("TEMP %.0f°C", s.TempC)})
+			out = append(out, Alert{key, text, true})
 		case s.TempC >= t.TempWarn:
-			out = append(out, alert{crit: false, text: fmt.Sprintf("TEMP %.0f°C", s.TempC)})
+			out = append(out, Alert{key, text, false})
 		}
 	}
 
 	var worst *collector.Disk
-	for i := range m.snap.Disks {
-		if worst == nil || m.snap.Disks[i].Percent > worst.Percent {
-			worst = &m.snap.Disks[i]
+	for i := range snap.Disks {
+		if worst == nil || snap.Disks[i].Percent > worst.Percent {
+			worst = &snap.Disks[i]
 		}
 	}
 	if worst != nil {
-		pct(t.MemWarn, t.MemCrit, worst.Percent, "DISK "+filepath.Base(worst.Mountpoint))
+		pct("disk:"+worst.Mountpoint, "DISK "+filepath.Base(worst.Mountpoint),
+			t.MemWarn, t.MemCrit, worst.Percent)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].crit && !out[j].crit })
+	sort.Slice(out, func(i, j int) bool { return out[i].Crit && !out[j].Crit })
 	return out
 }
 
-// alert is one threshold crossing shown in the strip.
-type alert struct {
-	crit bool
-	text string
+// alerts maps the shared evaluation onto the dashboard strip.
+func (m *Model) alerts() []Alert {
+	if !m.live {
+		return nil
+	}
+	return EvaluateAlerts(m.cfg, m.snap)
 }
 
 func (m *Model) alertsView() string {
@@ -312,8 +331,8 @@ func (m *Model) alertsView() string {
 	texts := make([]string, len(al))
 	crit := false
 	for i, a := range al {
-		texts[i] = a.text
-		crit = crit || a.crit
+		texts[i] = a.Text
+		crit = crit || a.Crit
 	}
 	style := m.th.Styles.Warn
 	if crit {
@@ -372,12 +391,18 @@ func (m *Model) gpuLines(innerW, maxLines int) []string {
 	return lines
 }
 
-// hotSensor returns the hottest reported sensor, if any.
-func (m *Model) hotSensor() *collector.Sensor {
-	if len(m.snap.Sensors) == 0 {
+// hottestSensor returns the hottest sensor of a snapshot (the list is
+// sorted hottest-first by the collector).
+func hottestSensor(snap collector.Snapshot) *collector.Sensor {
+	if len(snap.Sensors) == 0 {
 		return nil
 	}
-	return &m.snap.Sensors[0]
+	return &snap.Sensors[0]
+}
+
+// hotSensor returns the hottest reported sensor, if any.
+func (m *Model) hotSensor() *collector.Sensor {
+	return hottestSensor(m.snap)
 }
 
 // valuePct renders a percentage with threshold coloring.

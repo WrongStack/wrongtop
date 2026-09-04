@@ -3,8 +3,10 @@
 package processes
 
 import (
+	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/table"
 	"charm.land/bubbles/v2/textinput"
@@ -39,7 +41,21 @@ type Model struct {
 	collapsed map[int32]bool
 
 	confirm *killConfirm // non-nil while the signal prompt is open
+	detail  *procDetail  // non-nil while the detail box is shown
 	status  string       // transient action feedback
+}
+
+// procDetail backs the per-process detail box; the full command line is
+// fetched on demand, off the collection loop.
+type procDetail struct {
+	proc    collector.Proc
+	cmdline string
+}
+
+// cmdlineMsg delivers an on-demand command line lookup.
+type cmdlineMsg struct {
+	pid  int32
+	text string
 }
 
 type killConfirm struct {
@@ -73,6 +89,9 @@ func New(cfg *config.Config, th *theme.Theme) *Model {
 
 // Title implements ui.Tab.
 func (m *Model) Title() string { return "PROCESSES" }
+
+// SetTheme implements ui.Tab.
+func (m *Model) SetTheme(th *theme.Theme) { m.th = th }
 
 // SetSize implements ui.Tab.
 func (m *Model) SetSize(width, height int) {
@@ -111,6 +130,12 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 		}
 		return nil
 
+	case cmdlineMsg:
+		if m.detail != nil && m.detail.proc.PID == msg.pid {
+			m.detail.cmdline = msg.text
+		}
+		return nil
+
 	case tea.KeyPressMsg:
 		return m.key(msg)
 	}
@@ -123,6 +148,10 @@ func (m *Model) key(key tea.KeyPressMsg) tea.Cmd {
 	}
 	if m.editing {
 		return m.filterKey(key)
+	}
+	if m.detail != nil && key.String() == "esc" {
+		m.detail = nil
+		return nil
 	}
 
 	switch key.String() {
@@ -138,6 +167,8 @@ func (m *Model) key(key tea.KeyPressMsg) tea.Cmd {
 	case "t":
 		m.tree = !m.tree
 		m.rebuild()
+	case "enter":
+		return m.openDetail()
 	case "left", "right":
 		m.expandKey(key.String() == "right")
 	case m.killKey():
@@ -150,6 +181,23 @@ func (m *Model) key(key tea.KeyPressMsg) tea.Cmd {
 		return cmd
 	}
 	return nil
+}
+
+// openDetail shows the selected process's details and fetches its full
+// command line in the background.
+func (m *Model) openDetail() tea.Cmd {
+	cur := m.table.Cursor()
+	if cur < 0 || cur >= len(m.rows) {
+		return nil
+	}
+	p := m.rows[cur].Proc
+	m.detail = &procDetail{proc: p}
+	pid := p.PID
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		return cmdlineMsg{pid: pid, text: collector.Cmdline(ctx, pid)}
+	}
 }
 
 // expandKey collapses (right=false) or expands (right=true) the selected
@@ -273,12 +321,17 @@ func (m *Model) rebuild() {
 	m.table.SetRows(rows)
 
 	if selected != 0 {
+		found := false
 		for i, node := range m.rows {
 			if node.Proc.PID == selected {
 				m.table.SetCursor(i)
 				ui.EnsureRowVisible(&m.table, i)
+				found = true
 				break
 			}
+		}
+		if !found && m.detail != nil && m.detail.proc.PID == selected {
+			m.detail = nil // the selected process exited
 		}
 	}
 }
@@ -344,9 +397,40 @@ func (m *Model) View() string {
 	parts := []string{m.infoView(), m.table.View()}
 	if m.confirm != nil {
 		parts = append(parts, "", lipgloss.PlaceHorizontal(m.width, lipgloss.Center, m.confirmView()))
+	} else if m.detail != nil {
+		parts = append(parts, "", lipgloss.PlaceHorizontal(m.width, lipgloss.Center, m.detailView()))
 	}
 	parts = append(parts, m.footerView())
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+}
+
+// detailView renders the selected process's details: identity, resource
+// figures and the full command line.
+func (m *Model) detailView() string {
+	p := m.detail.proc
+	st := m.th.Styles
+	cmd := m.detail.cmdline
+	if cmd == "" {
+		cmd = p.Name
+	}
+	if w := m.width - 12; w > 8 {
+		cmd = trunc(cmd, w)
+	}
+	kv := func(key, val string) string {
+		return st.Muted.Render(fmt.Sprintf("%-9s", key)) + val
+	}
+	body := strings.Join([]string{
+		kv("PID", fmt.Sprintf("%d  (ppid %d)", p.PID, p.PPID)),
+		kv("USER", p.User),
+		kv("STATE", p.State),
+		kv("THREADS", fmt.Sprintf("%d · nice %d", p.Threads, p.Nice)),
+		kv("CPU/MEM", fmt.Sprintf("%.1f%% · %.1f%%", p.CPU, p.Mem)),
+		kv("RSS", format.Bytes(p.RSS)),
+		"",
+		cmd,
+	}, "\n")
+	return ui.Box(lipgloss.RoundedBorder(), st.Border, st.BorderChar, st.BorderTitle,
+		"PROCESS", body)
 }
 
 func (m *Model) infoView() string {

@@ -24,25 +24,47 @@ import (
 	"github.com/ersinkoc/wrongtop/internal/ui/processes"
 )
 
+// alertEvent is one threshold crossing in the session alert history.
+type alertEvent struct {
+	Key   string
+	Text  string
+	Crit  bool
+	Start time.Time
+	End   time.Time // zero while ongoing
+}
+
+// alertHistory caps the in-memory alert ring.
+const alertHistory = 256
+
+// flashTTL is how long a transient status-bar note stays visible.
+const flashTTL = 3 * time.Second
+
 // Model is the bubbletea root model.
 type Model struct {
 	cfg       *config.Config
+	cfgPath   string
 	theme     *theme.Theme
 	version   string
 	collector *collector.Collector
 	docker    *dockerclient.Client
 
-	width    int
-	height   int
-	active   int
-	tabs     []ui.Tab
-	helpMode bool
+	width, height int
+	active        int
+	tabs          []ui.Tab
+	helpMode      bool
+	alertsMode    bool // alert-history overlay
+
+	alerts     []*alertEvent
+	openAlerts map[string]*alertEvent
+
+	flash      string // transient status-bar note
+	flashUntil time.Time
 
 	latest collector.Snapshot // most recent sample, for the status bar
 }
 
 // New builds the root model with the tabs enabled by cfg.Modules.
-func New(cfg *config.Config, version string) *Model {
+func New(cfg *config.Config, cfgPath, version string) *Model {
 	th := theme.ByName(cfg.Theme)
 	// dashboard, disks and network are always present; cfg.Modules gates
 	// the optional tabs.
@@ -55,19 +77,20 @@ func New(cfg *config.Config, version string) *Model {
 	}
 	tabs = append(tabs, disks.New(cfg, th), network.New(cfg, th))
 
-	m := &Model{
-		cfg:       cfg,
-		theme:     th,
-		version:   version,
-		collector: collector.New(cfg.Refresh.D()),
-		tabs:      tabs,
+	return &Model{
+		cfg:        cfg,
+		cfgPath:    cfgPath,
+		theme:      th,
+		version:    version,
+		collector:  collector.New(cfg.Refresh.D()),
+		tabs:       tabs,
+		openAlerts: make(map[string]*alertEvent),
 	}
-	return m
 }
 
 // Run starts the wrongtop TUI.
-func Run(cfg *config.Config, version string) error {
-	_, err := tea.NewProgram(New(cfg, version)).Run()
+func Run(cfg *config.Config, cfgPath, version string) error {
+	_, err := tea.NewProgram(New(cfg, cfgPath, version)).Run()
 	return err
 }
 
@@ -137,6 +160,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case collector.SnapshotMsg:
 		m.latest = msg.Snap
+		m.trackAlerts(msg.Snap)
 		var cmds []tea.Cmd
 		for _, t := range m.tabs { // hidden tabs keep their history buffers warm
 			if cmd := t.Update(msg); cmd != nil {
@@ -163,15 +187,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(cmds...)
 
-	case tea.KeyPressMsg:
-		if cmd, handled := m.globalKey(msg); handled {
-			return m, cmd
-		}
-		if m.helpMode {
-			return m, nil // the help overlay swallows other keys
-		}
-		return m, m.tabs[m.active].Update(msg)
-
 	case tea.MouseClickMsg:
 		mouse := msg.Mouse()
 		if mouse.Y == 0 { // tab bar row
@@ -182,9 +197,18 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		if !m.helpMode {
+		if !m.helpMode && !m.alertsMode {
 			return m, m.tabs[m.active].Update(msg)
 		}
+
+	case tea.KeyPressMsg:
+		if cmd, handled := m.globalKey(msg); handled {
+			return m, cmd
+		}
+		if m.helpMode || m.alertsMode {
+			return m, nil // overlays swallow other keys
+		}
+		return m, m.tabs[m.active].Update(msg)
 	}
 
 	return m, m.tabs[m.active].Update(msg)
@@ -199,9 +223,16 @@ func (m *Model) globalKey(key tea.KeyPressMsg) (tea.Cmd, bool) {
 	case "?":
 		m.helpMode = !m.helpMode
 		return nil, true
+	case "a":
+		m.alertsMode = !m.alertsMode
+		return nil, true
 	case "esc":
 		if m.helpMode {
 			m.helpMode = false
+			return nil, true
+		}
+		if m.alertsMode {
+			m.alertsMode = false
 			return nil, true
 		}
 	case "tab":
@@ -215,8 +246,89 @@ func (m *Model) globalKey(key tea.KeyPressMsg) (tea.Cmd, bool) {
 			m.active = n
 		}
 		return nil, true
+	case "T":
+		m.cycleTheme()
+		return nil, true
+	case "R":
+		m.reloadConfig()
+		return nil, true
 	}
 	return nil, false
+}
+
+// cycleTheme switches to the next theme in theme.Names() live, without
+// touching the config file.
+func (m *Model) cycleTheme() {
+	names := theme.Names()
+	next := names[0]
+	for i, name := range names {
+		if name == m.cfg.Theme {
+			next = names[(i+1)%len(names)]
+			break
+		}
+	}
+	m.applyTheme(next)
+	m.setFlash("theme: " + next)
+}
+
+// applyTheme resolves and distributes a theme to every tab.
+func (m *Model) applyTheme(name string) {
+	th := theme.ByName(name)
+	m.theme = th
+	m.cfg.Theme = name
+	for _, t := range m.tabs {
+		t.SetTheme(th)
+	}
+}
+
+// reloadConfig re-reads the YAML file and applies everything that can
+// change live: theme, refresh cadence, thresholds and key bindings.
+func (m *Model) reloadConfig() {
+	reloaded, err := config.Load(m.cfgPath)
+	if err != nil {
+		m.setFlash("config error: " + err.Error())
+		return
+	}
+	*m.cfg = *reloaded // tabs share the pointer; in-place swap updates all
+	th := theme.ByName(m.cfg.Theme)
+	m.theme = th
+	for _, t := range m.tabs {
+		t.SetTheme(th)
+	}
+	m.setFlash("config reloaded")
+}
+
+func (m *Model) setFlash(text string) {
+	m.flash = text
+	m.flashUntil = time.Now().Add(flashTTL)
+}
+
+// trackAlerts folds the snapshot's threshold crossings into the session
+// history: new keys open events, disappeared keys close them.
+func (m *Model) trackAlerts(snap collector.Snapshot) {
+	current := dashboard.EvaluateAlerts(m.cfg, snap)
+	seen := make(map[string]bool, len(current))
+	now := snap.Time
+	for _, a := range current {
+		seen[a.Key] = true
+		if ev, ok := m.openAlerts[a.Key]; ok {
+			ev.Text = a.Text
+			ev.Crit = a.Crit // severity may escalate mid-event
+			continue
+		}
+		ev := &alertEvent{Key: a.Key, Text: a.Text, Crit: a.Crit, Start: now}
+		m.openAlerts[a.Key] = ev
+		m.alerts = append(m.alerts, ev)
+	}
+	for key, ev := range m.openAlerts {
+		if !seen[key] {
+			ev.End = now
+			delete(m.openAlerts, key)
+		}
+	}
+	if len(m.alerts) > alertHistory {
+		m.alerts = m.alerts[len(m.alerts)-alertHistory:]
+	}
 }
 
 // View implements tea.Model.
@@ -224,6 +336,9 @@ func (m *Model) View() tea.View {
 	content := m.tabs[m.active].View()
 	if m.helpMode {
 		content = m.helpOverlay(content)
+	}
+	if m.alertsMode {
+		content = m.alertsOverlay(content)
 	}
 	v := tea.NewView(strings.Join([]string{
 		m.tabBarView(),
@@ -242,6 +357,45 @@ func (m *Model) helpOverlay(content string) string {
 		lipgloss.Place(m.width, strings.Count(content, "\n")+1,
 			lipgloss.Center, lipgloss.Center, m.helpView()),
 	)
+}
+
+// alertsOverlay centers the alert-history box over the tab content.
+func (m *Model) alertsOverlay(content string) string {
+	return lipgloss.JoinVertical(lipgloss.Center,
+		lipgloss.Place(m.width, strings.Count(content, "\n")+1,
+			lipgloss.Center, lipgloss.Center, m.alertsOverlayView()),
+	)
+}
+
+func (m *Model) alertsOverlayView() string {
+	st := m.theme.Styles
+	var b strings.Builder
+	if len(m.alerts) == 0 {
+		b.WriteString(st.Muted.Render("no threshold crossings this session"))
+	}
+	now := time.Now()
+	for i := len(m.alerts) - 1; i >= 0 && i > len(m.alerts)-17; i-- { // newest first
+		ev := m.alerts[i]
+		style := st.Warn
+		if ev.Crit {
+			style = st.Crit
+		}
+		marker, dur := "●", ev.End.Sub(ev.Start)
+		if ev.End.IsZero() {
+			dur = now.Sub(ev.Start)
+		} else {
+			marker = "·"
+		}
+		b.WriteString(ev.Start.Format("15:04:05") + "  " +
+			style.Render(marker+" "+ev.Text) +
+			st.Muted.Render(fmt.Sprintf("  [%s]", dur.Round(time.Second))))
+		if i < len(m.alerts) && b.Len() > 0 {
+			b.WriteString("\n")
+		}
+	}
+	footer := st.HelpKey.Render("esc") + st.HelpText.Render(" close")
+	return ui.Box(lipgloss.RoundedBorder(), st.Border, st.BorderChar, st.BorderTitle,
+		"ALERTS", strings.TrimRight(b.String(), "\n")+"\n\n  "+footer)
 }
 
 // tabAt resolves a click on the tab bar row to a tab index. Tab styles
@@ -272,29 +426,30 @@ func (m *Model) tabBarView() string {
 	return m.theme.Styles.TabBar.Render(strings.Join(parts, ""))
 }
 
+// statusBarView renders the btop-style bottom line: identity left, live
+// chips center, key hints right.
 func (m *Model) statusBarView() string {
 	left := m.theme.Styles.Title.Render("wrongtop ") +
 		m.theme.Styles.Muted.Render("v"+m.version)
 
 	right := m.theme.Styles.HelpKey.Render(fmt.Sprintf("1-%d", len(m.tabs))) +
 		m.theme.Styles.HelpText.Render(" tabs  ") +
-		m.theme.Styles.HelpKey.Render("tab") +
-		m.theme.Styles.HelpText.Render(" next  ") +
+		m.theme.Styles.HelpKey.Render("T") +
+		m.theme.Styles.HelpText.Render(" theme  ") +
+		m.theme.Styles.HelpKey.Render("R") +
+		m.theme.Styles.HelpText.Render(" reload  ") +
+		m.theme.Styles.HelpKey.Render("a") +
+		m.theme.Styles.HelpText.Render(" alerts  ") +
 		m.theme.Styles.HelpKey.Render("?") +
 		m.theme.Styles.HelpText.Render(" help  ") +
 		m.theme.Styles.HelpKey.Render("q") +
 		m.theme.Styles.HelpText.Render(" quit")
 
-	// live summary, btop-style bottom line
 	mid := ""
-	if !m.latest.Time.IsZero() {
-		var rx, tx float64
-		for _, n := range m.latest.Nets {
-			rx += n.RxRate
-			tx += n.TxRate
-		}
-		mid = fmt.Sprintf("cpu %.0f%%  mem %.0f%%  ↓%s ↑%s",
-			m.latest.CPU.Percent, m.latest.Mem.Percent, format.Rate(rx), format.Rate(tx))
+	if time.Now().Before(m.flashUntil) && m.flash != "" {
+		mid = m.theme.Styles.Warn.Render(m.flash)
+	} else if !m.latest.Time.IsZero() {
+		mid = m.liveSummary()
 	}
 
 	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - lipgloss.Width(mid)
@@ -304,4 +459,40 @@ func (m *Model) statusBarView() string {
 	half := gap / 2
 	return m.theme.Styles.Status.Render(left +
 		strings.Repeat(" ", half) + mid + strings.Repeat(" ", gap-half) + right)
+}
+
+// liveSummary renders the center chips: cpu, memory, network rates and,
+// when the platform reports them, temperature and battery.
+func (m *Model) liveSummary() string {
+	var b strings.Builder
+	b.WriteString(m.theme.Value(m.cfg.Thresholds.CPUWarn, m.cfg.Thresholds.CPUCrit, m.latest.CPU.Percent).
+		Render(fmt.Sprintf("cpu %.0f%%", m.latest.CPU.Percent)))
+	b.WriteString(m.theme.Styles.Muted.Render("  "))
+	b.WriteString(m.theme.Value(m.cfg.Thresholds.MemWarn, m.cfg.Thresholds.MemCrit, m.latest.Mem.Percent).
+		Render(fmt.Sprintf("mem %.0f%%", m.latest.Mem.Percent)))
+
+	var rx, tx float64
+	for _, n := range m.latest.Nets {
+		rx += n.RxRate
+		tx += n.TxRate
+	}
+	b.WriteString(m.theme.Styles.Muted.Render("  ↓" + format.Rate(rx) + " ↑" + format.Rate(tx)))
+
+	if len(m.latest.Sensors) > 0 {
+		s := m.latest.Sensors[0]
+		b.WriteString("  " + m.theme.Value(m.cfg.Thresholds.TempWarn, m.cfg.Thresholds.TempCrit, s.TempC).
+			Render(fmt.Sprintf("%.0f°C", s.TempC)))
+	}
+	if bat := m.latest.Battery; bat != nil {
+		icon := "bat"
+		if bat.Charging {
+			icon = "⚡"
+		}
+		style := m.theme.Styles.Warn
+		if bat.Charging || bat.Percent > 30 {
+			style = m.theme.Styles.OK
+		}
+		b.WriteString("  " + style.Render(fmt.Sprintf("%s%.0f%%", icon, bat.Percent)))
+	}
+	return b.String()
 }

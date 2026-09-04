@@ -37,6 +37,7 @@ func (d Duration) D() time.Duration { return time.Duration(d) }
 type Config struct {
 	Theme      string     `yaml:"theme"`
 	Refresh    Duration   `yaml:"refresh"`
+	Layout     string     `yaml:"layout"` // full | compact | minimal
 	Modules    Modules    `yaml:"modules"`
 	Thresholds Thresholds `yaml:"thresholds"`
 	Keys       Keys       `yaml:"keys"`
@@ -83,8 +84,9 @@ func Default() *Config {
 // Sample is an annotated example configuration, printed by
 // `wrongtop config-sample`.
 const Sample = `# ~/.config/wrongtop/config.yaml
-theme: gruvbox-dark      # gruvbox-dark | catppuccin-mocha | dracula
+theme: gruvbox-dark      # 8 built-ins, or a file in ~/.config/wrongtop/themes
 refresh: 1s              # min 250ms, max 10s
+layout: full             # full | compact | minimal (p cycles it live)
 
 modules:
   docker: true           # show the DOCKER tab (daemon optional)
@@ -99,7 +101,7 @@ thresholds:              # percent → warn/critical coloring
   temp_crit: 80
 
 keys:                    # overrides (processes tab)
-  kill: k                # terminate
+  kill: k                # open the signal menu
   filter: /
 `
 
@@ -150,6 +152,11 @@ func (c *Config) normalize() {
 	}
 	if c.Theme == "" {
 		c.Theme = "gruvbox-dark"
+	}
+	switch c.Layout {
+	case "full", "compact", "minimal":
+	default:
+		c.Layout = "full"
 	}
 	if c.Thresholds.TempWarn <= 0 {
 		c.Thresholds.TempWarn = 60

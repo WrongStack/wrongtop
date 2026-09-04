@@ -39,6 +39,9 @@ func New(cfg *config.Config, th *theme.Theme) *Model {
 // Title implements ui.Tab.
 func (m *Model) Title() string { return "NETWORK" }
 
+// SetTheme implements ui.Tab.
+func (m *Model) SetTheme(th *theme.Theme) { m.th = th }
+
 // SetSize implements ui.Tab.
 func (m *Model) SetSize(width, height int) {
 	m.width, m.height = width, height

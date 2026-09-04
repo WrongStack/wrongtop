@@ -36,13 +36,30 @@ type Model struct {
 
 	snap collector.Snapshot
 	live bool // at least one snapshot received
+
+	density int // 0 full, 1 compact (fewer graphs), 2 minimal (HOST+CPU)
 }
+
+// Density presets cycle with p and start from config layout.
+const (
+	densityFull = iota
+	densityCompact
+	densityMinimal
+)
 
 // New builds the dashboard tab.
 func New(cfg *config.Config, th *theme.Theme) *Model {
+	density := densityFull
+	switch cfg.Layout {
+	case "compact":
+		density = densityCompact
+	case "minimal":
+		density = densityMinimal
+	}
 	return &Model{
 		cfg:       cfg,
 		th:        th,
+		density:   density,
 		cpuGraph:  canvas.New(60, 3, ramp(th, th.Palette.Green, th.Palette.Yellow, th.Palette.Orange, th.Palette.Red)),
 		memGraph:  canvas.New(28, 2, ramp(th, th.Palette.Blue, th.Palette.Purple, th.Palette.Red)),
 		swapGraph: canvas.New(28, 1, ramp(th, th.Palette.Purple, th.Palette.Red)),
@@ -53,6 +70,17 @@ func New(cfg *config.Config, th *theme.Theme) *Model {
 
 // Title implements ui.Tab.
 func (m *Model) Title() string { return "DASHBOARD" }
+
+// SetTheme implements ui.Tab; graph ramps derive from the palette so
+// they must be rebuilt alongside the styles.
+func (m *Model) SetTheme(th *theme.Theme) {
+	m.th = th
+	m.cpuGraph.SetRamp(ramp(th, th.Palette.Green, th.Palette.Yellow, th.Palette.Orange, th.Palette.Red))
+	m.memGraph.SetRamp(ramp(th, th.Palette.Blue, th.Palette.Purple, th.Palette.Red))
+	m.swapGraph.SetRamp(ramp(th, th.Palette.Purple, th.Palette.Red))
+	m.rxGraph.SetRamp(ramp(th, th.Palette.Green, th.Palette.Cyan))
+	m.txGraph.SetRamp(ramp(th, th.Palette.Blue, th.Palette.Cyan))
+}
 
 // layoutClass picks how the panels arrange at the current size.
 type layoutClass int
@@ -106,19 +134,25 @@ func (m *Model) SetSize(width, height int) {
 
 // Update implements ui.Tab.
 func (m *Model) Update(msg tea.Msg) tea.Cmd {
-	snap, ok := msg.(collector.SnapshotMsg)
-	if !ok {
+	switch msg := msg.(type) {
+	case collector.SnapshotMsg:
+		m.snap = msg.Snap
+		m.live = true
+
+		rx, tx := totalRates(m.snap.Nets)
+		m.cpuGraph.Push(clamp01(m.snap.CPU.Percent / 100))
+		m.memGraph.Push(clamp01(m.snap.Mem.Percent / 100))
+		m.swapGraph.Push(clamp01(m.snap.Mem.SwapPercent / 100))
+		m.rxGraph.Push(clamp01(rx / m.rxScale.Observe(rx)))
+		m.txGraph.Push(clamp01(tx / m.txScale.Observe(tx)))
+		return nil
+
+	case tea.KeyPressMsg:
+		if msg.String() == "p" { // cycle density presets
+			m.density = (m.density + 1) % 3
+		}
 		return nil
 	}
-	m.snap = snap.Snap
-	m.live = true
-
-	rx, tx := totalRates(m.snap.Nets)
-	m.cpuGraph.Push(clamp01(m.snap.CPU.Percent / 100))
-	m.memGraph.Push(clamp01(m.snap.Mem.Percent / 100))
-	m.swapGraph.Push(clamp01(m.snap.Mem.SwapPercent / 100))
-	m.rxGraph.Push(clamp01(rx / m.rxScale.Observe(rx)))
-	m.txGraph.Push(clamp01(tx / m.txScale.Observe(tx)))
 	return nil
 }
 
@@ -172,6 +206,9 @@ func (m *Model) gridRows() []string {
 		" ",
 		m.box(cpuInner, "CPU", padLines(m.cpuView(cpuInner, rowA-2), rowA-2)),
 	)
+	if m.density == densityMinimal {
+		return []string{row1}
+	}
 	row2 := lipgloss.JoinHorizontal(lipgloss.Top,
 		m.box(memInner, "MEMORY", padLines(m.memView(memInner), rowB-2)),
 		" ",
@@ -225,6 +262,9 @@ func (m *Model) stackedRows() []string {
 	memInner := max(14, hostCol-6)
 	if m.class() == layoutNarrow {
 		memInner = max(12, w/2-8)
+	}
+	if m.density == densityMinimal {
+		return rows // HOST|CPU only
 	}
 	rows = append(rows, m.box(max(20, 2*memInner+2), "MEMORY", strings.Join(m.memView(memInner), "\n")), "")
 

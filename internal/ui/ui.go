@@ -4,7 +4,8 @@ package ui
 
 import (
 	"charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
+
+	"github.com/ersinkoc/wrongtop/internal/theme"
 )
 
 // Tab is a single page of the wrongtop UI. The root model forwards
@@ -20,34 +21,6 @@ type Tab interface {
 	Update(msg tea.Msg) tea.Cmd
 	// View renders the tab inside the content area.
 	View() string
-}
-
-// Placeholder is a stand-in tab for features that are not wired up yet.
-type Placeholder struct {
-	title string
-	note  string
-	width int
-}
-
-// NewPlaceholder returns a placeholder tab.
-func NewPlaceholder(title, note string) *Placeholder {
-	return &Placeholder{title: title, note: note}
-}
-
-// Title implements Tab.
-func (p *Placeholder) Title() string { return p.title }
-
-// SetSize implements Tab.
-func (p *Placeholder) SetSize(width, height int) { p.width = width }
-
-// Update implements Tab; placeholders have no state.
-func (p *Placeholder) Update(tea.Msg) tea.Cmd { return nil }
-
-// View implements Tab.
-func (p *Placeholder) View() string {
-	body := lipgloss.JoinVertical(lipgloss.Center,
-		lipgloss.NewStyle().Bold(true).Render(p.title),
-		lipgloss.NewStyle().Faint(true).Render(p.note),
-	)
-	return lipgloss.Place(p.width, 0, lipgloss.Center, lipgloss.Center, body)
+	// SetTheme swaps the color theme without losing tab state.
+	SetTheme(th *theme.Theme)
 }

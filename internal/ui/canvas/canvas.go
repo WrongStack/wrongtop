@@ -57,6 +57,13 @@ func (g *Graph) SetMax(max float64) {
 	}
 }
 
+// SetRamp replaces the color ramp and rebuilds the derived styles (used
+// for live theme changes).
+func (g *Graph) SetRamp(ramp []color.Color) {
+	g.ramp = ramp
+	g.buildStyles()
+}
+
 // Resize keeps the newest samples that fit the new capacity.
 func (g *Graph) Resize(width, height int) {
 	if width == g.width && height == g.height {

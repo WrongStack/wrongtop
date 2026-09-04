@@ -25,6 +25,9 @@ func (m *Model) helpSections() []helpSection {
 			lines: []string{
 				"1-5        jump to tab",
 				"tab        next tab (shift+tab back)",
+				"T          cycle color theme",
+				"R          reload config file",
+				"a          alert history",
 				"q / ctrl+c quit",
 				"?          toggle this help",
 				"mouse      scroll and click lists",
@@ -38,6 +41,7 @@ func (m *Model) helpSections() []helpSection {
 				"S          reverse sort order",
 				"t          toggle process tree",
 				"left/right collapse / expand tree",
+				"enter      process details",
 				m.killKey() + "          signal menu (SIGTERM)",
 				m.forceKey() + "          signal menu (SIGKILL)",
 				"←→         pick signal · y sends",

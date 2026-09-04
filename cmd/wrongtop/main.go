@@ -21,11 +21,15 @@ func main() {
 		Long:         "WrongTop is a terminal system monitor for macOS, Linux and Windows.\nIt watches CPU, memory, processes, disks, network and Docker containers.",
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := config.Load(cmd.Flag("config").Value.String())
+			path := cmd.Flag("config").Value.String()
+			if path == "" {
+				path = config.Path()
+			}
+			cfg, err := config.Load(path)
 			if err != nil {
 				return err
 			}
-			return app.Run(cfg, version)
+			return app.Run(cfg, path, version)
 		},
 	}
 

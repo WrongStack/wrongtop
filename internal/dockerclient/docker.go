@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/moby/moby/api/types/container"
@@ -62,30 +63,46 @@ type Container struct {
 	BlkW   uint64
 }
 
-// List returns all containers; running ones carry live stats.
+// List returns all containers; running ones carry live stats fetched
+// concurrently (bounded), so many containers do not multiply the poll
+// time. Stats are best-effort: zeros are fine when they fail.
 func (c *Client) List(ctx context.Context) ([]Container, error) {
 	res, err := c.cli.ContainerList(ctx, client.ContainerListOptions{All: true})
 	if err != nil {
 		return nil, err
 	}
-	out := make([]Container, 0, len(res.Items))
-	for _, s := range res.Items {
-		ct := Container{
-			ID:     s.ID,
-			Image:  s.Image,
-			State:  string(s.State),
-			Status: s.Status,
-		}
+	out := make([]Container, len(res.Items))
+	fullIDs := make([]string, len(res.Items))
+	running := make([]int, 0, len(res.Items))
+	for i, s := range res.Items {
+		fullIDs[i] = s.ID
+		ct := &out[i]
+		ct.Image = s.Image
+		ct.State = string(s.State)
+		ct.Status = s.Status
 		if len(s.Names) > 0 {
 			ct.Name = strings.TrimPrefix(s.Names[0], "/")
 		}
 		if s.State == container.StateRunning {
-			// stats are best-effort; zeros are fine when they fail
-			_ = c.fillStats(ctx, ct.ID, &ct)
+			running = append(running, i)
 		}
-		ct.ID = ct.ID[:min(12, len(ct.ID))]
-		out = append(out, ct)
+		ct.ID = s.ID[:min(12, len(s.ID))]
 	}
+
+	sem := make(chan struct{}, 8) //nolint:mnd // bounded stat fan-out
+	var wg sync.WaitGroup
+	for _, i := range running {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			statCtx, cancel := context.WithTimeout(ctx, 2500*time.Millisecond) //nolint:mnd
+			defer cancel()
+			_ = c.fillStats(statCtx, fullIDs[i], &out[i])
+		}(i)
+	}
+	wg.Wait()
 	return out, nil
 }
 

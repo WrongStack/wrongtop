@@ -113,7 +113,7 @@ func TestAlertStrip(t *testing.T) {
 	snap.CPU.Percent = 95 // crit is 90
 	m.Update(collector.SnapshotMsg{Snap: snap})
 
-	if al := m.alerts(); len(al) != 1 || !al[0].crit || !strings.Contains(al[0].text, "CPU 95%") {
+	if al := m.alerts(); len(al) != 1 || !al[0].Crit || !strings.Contains(al[0].Text, "CPU 95%") {
 		t.Fatalf("expected one critical CPU alert, got %+v", m.alerts())
 	}
 	if out := m.View(); !contains(out, "⚠") || !contains(out, "CPU 95%") {
