@@ -140,6 +140,10 @@ func (m *Model) SetSize(width, height int) {
 		return
 	}
 	cpuW := max(20, width-hostCol-8)
+	if m.density == densityFull && m.class() == layoutGrid {
+		// leave room for the big-digit hero beside the graph
+		cpuW = max(20, width-hostCol-2-14)
+	}
 	memW := max(14, hostCol-6)
 	rxW := max(10, netCol/2-1)
 	if m.class() == layoutNarrow {

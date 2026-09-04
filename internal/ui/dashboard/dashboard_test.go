@@ -67,7 +67,7 @@ func TestGridShowsAllPanels(t *testing.T) {
 	out := m.View()
 	for _, want := range []string{
 		"HOST", "CPU", "MEMORY", "NETWORK", "DISKS", "PROCESSES",
-		"testhost", "45.2%", "62.5%", "busy", "en0",
+		"testhost", "45.2%", "10.0 GiB / 16.0 GiB", "busy", "en0",
 	} {
 		if !contains(out, want) {
 			t.Errorf("grid view missing %q", want)

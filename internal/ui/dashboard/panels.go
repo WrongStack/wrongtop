@@ -67,9 +67,9 @@ func (m *Model) hostView() []string {
 	return lines
 }
 
-// cpuView renders the total gauge, a full-width gradient meter, the
-// scrolling graph and per-core bars.
-// maxLines bounds the output; per-core rows are trimmed first.
+// cpuView renders the total gauge and — on wide panels — the btop-style
+// hero: big block digits beside the scrolling graph, then a full-width
+// gradient meter, sensors and per-core bars. maxLines bounds the output.
 func (m *Model) cpuView(innerW, maxLines int) []string {
 	c := m.snap.CPU
 	pct := m.th.Value(m.cfg.Thresholds.CPUWarn, m.cfg.Thresholds.CPUCrit, c.Percent).
@@ -90,15 +90,38 @@ func (m *Model) cpuView(innerW, maxLines int) []string {
 	if innerW > 20 { // full-width gradient meter, btop-style
 		lines = append(lines, canvas.GradientBar(innerW, c.Percent/100, m.cpuRamp, m.th.Styles.Muted))
 	}
-	lines = append(lines, strings.Split(m.cpuGraph.View(), "\n")...)
 
-	graphH := len(lines) // head + meter + graph rows; per-core fills the rest
+	graph := strings.Split(m.cpuGraph.View(), "\n")
+	if hero := m.heroWorth(innerW, maxLines); hero {
+		// big digits left, graph right: the headline moment of the tab
+		big := canvas.BigNumber(int(c.Percent+0.5), m.cpuRamp)
+		gap := strings.Repeat(" ", 2)
+		rows := make([]string, 4)
+		for i := range big {
+			g := ""
+			if i > 0 && i-1 < len(graph) {
+				g = graph[i-1]
+			}
+			rows[i] = big[i] + gap + g
+		}
+		lines = append(lines, rows...)
+	} else {
+		lines = append(lines, graph...)
+	}
+
+	graphH := len(lines)
 	if m.density < densityCompact {
 		if coreLines := m.perCoreView(innerW, maxLines-graphH); coreLines != "" {
 			lines = append(lines, strings.Split(coreLines, "\n")...)
 		}
 	}
 	return lines
+}
+
+// heroWorth reports whether the panel is wide and tall enough for the
+// big-digit hero composition.
+func (m *Model) heroWorth(innerW, maxLines int) bool {
+	return m.density == densityFull && innerW >= 56 && maxLines >= 8
 }
 
 // perCoreView renders mini bars, up to perCoreColumns per row, bounded by
@@ -143,38 +166,65 @@ func (m *Model) coreBar(i int, pct float64) string {
 	return label + bar + val
 }
 
-// memView renders gradient meters for RAM, swap and zram in one panel;
-// the history graphs trail so they are the first thing dropped on short
-// screens.
+// memView renders gradient meters for RAM, swap and zram — with a
+// big-digit hero on wide panels; the history graphs trail so they are
+// the first thing dropped on short screens.
 func (m *Model) memView(innerW int) []string {
 	mem := m.snap.Mem
 	barW := clampInt(innerW-14, 12, 28)
 
-	lines := []string{
-		m.valuePct(mem.Percent, m.cfg.Thresholds.MemWarn, m.cfg.Thresholds.MemCrit) +
-			m.th.Styles.Muted.Render(fmt.Sprintf("  %s / %s", format.Bytes(mem.Used), format.Bytes(mem.Total))),
+	right := []string{
+		m.th.Styles.Muted.Render(fmt.Sprintf("RAM   %s / %s", format.Bytes(mem.Used), format.Bytes(mem.Total))),
 		canvas.GradientBar(barW, mem.Percent/100, m.memRamp, m.th.Styles.Muted),
 	}
 
 	if mem.SwapTotal > 0 {
-		lines = append(lines,
+		right = append(right,
 			m.valuePct(mem.SwapPercent, m.cfg.Thresholds.MemWarn, m.cfg.Thresholds.MemCrit)+
 				m.th.Styles.Muted.Render(fmt.Sprintf("  SWAP  %s / %s",
 					format.Bytes(mem.SwapUsed), format.Bytes(mem.SwapTotal))),
 			canvas.GradientBar(barW, mem.SwapPercent/100, m.memRamp, m.th.Styles.Muted),
 		)
 	} else {
-		lines = append(lines, m.th.Styles.Muted.Render("SWAP —"))
+		right = append(right, m.th.Styles.Muted.Render("SWAP —"))
 	}
 
 	if mem.ZramTotal > 0 { // linux compressed swap device
 		pct := float64(mem.ZramUsed) / float64(mem.ZramTotal) * 100
-		lines = append(lines,
+		right = append(right,
 			m.valuePct(pct, m.cfg.Thresholds.MemWarn, m.cfg.Thresholds.MemCrit)+
 				m.th.Styles.Muted.Render(fmt.Sprintf("  ZRAM  %s / %s",
 					format.Bytes(mem.ZramUsed), format.Bytes(mem.ZramTotal))),
 			canvas.GradientBar(barW, pct/100, m.ioRamp, m.th.Styles.Muted),
 		)
+	}
+
+	var lines []string
+	if heroWorth := innerW >= 26 && m.density != densityMinimal; heroWorth {
+		// big percent left, meters right
+		big := canvas.BigNumber(int(mem.Percent+0.5), m.memRamp)
+		gap := strings.Repeat(" ", 2)
+		for i := 0; i < len(big) || i < len(right); i++ {
+			l, r := "", ""
+			if i < len(big) {
+				l = big[i]
+			}
+			if i < len(right) {
+				r = right[i]
+			}
+			if i == 0 && l != "" { // align the meters under the digits
+				l += gap
+			} else if l != "" {
+				l += gap
+			}
+			lines = append(lines, l+r)
+		}
+	} else {
+		lines = append(lines,
+			m.valuePct(mem.Percent, m.cfg.Thresholds.MemWarn, m.cfg.Thresholds.MemCrit)+
+				m.th.Styles.Muted.Render(fmt.Sprintf("  RAM   %s / %s",
+					format.Bytes(mem.Used), format.Bytes(mem.Total))))
+		lines = append(lines, right[1])
 	}
 
 	if m.density < densityCompact { // history graphs trail, dropped first
