@@ -53,7 +53,7 @@ func New(cfg *config.Config, th *theme.Theme) *Model {
 }
 
 // Title implements ui.Tab.
-func (m *Model) Title() string { return "DOCKER" }
+func (m *Model) Title() string { return "▣ DOCKER" }
 
 // SetTheme implements ui.Tab.
 func (m *Model) SetTheme(th *theme.Theme) { m.th = th }

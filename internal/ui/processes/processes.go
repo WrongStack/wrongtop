@@ -19,6 +19,7 @@ import (
 	"github.com/ersinkoc/wrongtop/internal/procs"
 	"github.com/ersinkoc/wrongtop/internal/theme"
 	"github.com/ersinkoc/wrongtop/internal/ui"
+	"github.com/ersinkoc/wrongtop/internal/ui/canvas"
 )
 
 // Model is the processes tab.
@@ -39,6 +40,7 @@ type Model struct {
 	editing   bool // filter input active
 	tree      bool // parent-child view
 	collapsed map[int32]bool
+	cpuRamp   canvas.Ramp // value-colored CPU column
 
 	confirm *killConfirm // non-nil while the signal prompt is open
 	detail  *procDetail  // non-nil while the detail box is shown
@@ -84,14 +86,18 @@ func New(cfg *config.Config, th *theme.Theme) *Model {
 		input:     in,
 		desc:      true,
 		collapsed: make(map[int32]bool),
+		cpuRamp:   canvas.Ramp{th.Palette.Green, th.Palette.Yellow, th.Palette.Orange, th.Palette.Red},
 	}
 }
 
 // Title implements ui.Tab.
-func (m *Model) Title() string { return "PROCESSES" }
+func (m *Model) Title() string { return "⚙ PROCESSES" }
 
 // SetTheme implements ui.Tab.
-func (m *Model) SetTheme(th *theme.Theme) { m.th = th }
+func (m *Model) SetTheme(th *theme.Theme) {
+	m.th = th
+	m.cpuRamp = canvas.Ramp{th.Palette.Green, th.Palette.Yellow, th.Palette.Orange, th.Palette.Red}
+}
 
 // SetSize implements ui.Tab.
 func (m *Model) SetSize(width, height int) {
@@ -366,7 +372,9 @@ func (m *Model) rowName(node procs.TreeNode) string {
 
 func (m *Model) row(node procs.TreeNode) table.Row {
 	p := node.Proc
-	cpu := m.th.Value(m.cfg.Thresholds.CPUWarn, m.cfg.Thresholds.CPUCrit, p.CPU)
+	// CPU colored along the value ramp, MEM by thresholds
+	cpuStyle := lipgloss.NewStyle().Foreground(
+		lipgloss.Color(m.cpuRamp.At(min(p.CPU, 100) / 100)))
 	mem := m.th.Value(m.cfg.Thresholds.MemWarn, m.cfg.Thresholds.MemCrit, p.Mem)
 	state := m.th.Styles.Muted
 	switch p.State {
@@ -380,7 +388,7 @@ func (m *Model) row(node procs.TreeNode) table.Row {
 	return table.Row{
 		fmt.Sprintf("%7d", p.PID),
 		m.rowName(node),
-		cpu.Render(fmt.Sprintf("%5.1f", p.CPU)),
+		cpuStyle.Render(fmt.Sprintf("%5.1f", p.CPU)),
 		mem.Render(fmt.Sprintf("%5.1f", p.Mem)),
 		fmt.Sprintf("%6s", format.Bytes(p.RSS)),
 		trunc(p.User, 12),

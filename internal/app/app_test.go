@@ -15,7 +15,7 @@ import (
 func TestNewTabsRespectModules(t *testing.T) {
 	all := config.Default()
 	m := New(all, "", "test")
-	want := []string{"DASHBOARD", "PROCESSES", "DOCKER", "DISKS", "NETWORK"}
+	want := []string{"⌂ DASHBOARD", "⚙ PROCESSES", "▣ DOCKER", "▤ DISKS", "⇅ NETWORK"}
 	if len(m.tabs) != len(want) {
 		t.Fatalf("default modules: got %d tabs, want %d", len(m.tabs), len(want))
 	}
@@ -28,7 +28,7 @@ func TestNewTabsRespectModules(t *testing.T) {
 	off := config.Default()
 	off.Modules = config.Modules{}
 	m = New(off, "", "test")
-	want = []string{"DASHBOARD", "DISKS", "NETWORK"}
+	want = []string{"⌂ DASHBOARD", "▤ DISKS", "⇅ NETWORK"}
 	if len(m.tabs) != len(want) {
 		t.Fatalf("optional modules off: got %d tabs, want %d", len(m.tabs), len(want))
 	}

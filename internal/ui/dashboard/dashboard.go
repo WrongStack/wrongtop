@@ -86,7 +86,7 @@ func (m *Model) applyRamps(th *theme.Theme) {
 }
 
 // Title implements ui.Tab.
-func (m *Model) Title() string { return "DASHBOARD" }
+func (m *Model) Title() string { return "⌂ DASHBOARD" }
 
 // SetTheme implements ui.Tab; graph ramps derive from the palette so
 // they must be rebuilt alongside the styles.
