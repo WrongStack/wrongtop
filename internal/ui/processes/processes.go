@@ -1,5 +1,5 @@
 // Package processes renders the process table tab: sortable, filterable,
-// with kill actions behind a confirmation prompt.
+// flat or tree view, with a signal picker behind a confirmation prompt.
 package processes
 
 import (
@@ -29,21 +29,24 @@ type Model struct {
 	table table.Model
 	input textinput.Model
 
-	procs   []collector.Proc // latest snapshot, unfiltered
-	visible []collector.Proc // rows currently shown, in order
-	sort    procs.SortKey
-	desc    bool
-	filter  string
-	editing bool // filter input active
+	procs     []collector.Proc // latest snapshot, unfiltered
+	rows      []procs.TreeNode // rows currently shown, in display order
+	sort      procs.SortKey
+	desc      bool
+	filter    string
+	editing   bool // filter input active
+	tree      bool // parent-child view
+	collapsed map[int32]bool
 
-	confirm *killConfirm // non-nil while the kill prompt is open
+	confirm *killConfirm // non-nil while the signal prompt is open
 	status  string       // transient action feedback
 }
 
 type killConfirm struct {
-	pid   int32
-	name  string
-	force bool
+	pid  int32
+	name string
+	sigs []procs.Signal // signals offerable on this platform
+	sig  int            // index into sigs
 }
 
 // New builds the processes tab.
@@ -59,11 +62,12 @@ func New(cfg *config.Config, th *theme.Theme) *Model {
 		table.WithHeight(20),
 	)
 	return &Model{
-		cfg:   cfg,
-		th:    th,
-		table: t,
-		input: in,
-		desc:  true,
+		cfg:       cfg,
+		th:        th,
+		table:     t,
+		input:     in,
+		desc:      true,
+		collapsed: make(map[int32]bool),
 	}
 }
 
@@ -131,6 +135,11 @@ func (m *Model) key(key tea.KeyPressMsg) tea.Cmd {
 	case "S":
 		m.desc = !m.desc
 		m.rebuild()
+	case "t":
+		m.tree = !m.tree
+		m.rebuild()
+	case "left", "right":
+		m.expandKey(key.String() == "right")
 	case m.killKey():
 		return m.openConfirm(false)
 	case m.forceKey():
@@ -141,6 +150,25 @@ func (m *Model) key(key tea.KeyPressMsg) tea.Cmd {
 		return cmd
 	}
 	return nil
+}
+
+// expandKey collapses (right=false) or expands (right=true) the selected
+// process's subtree in tree mode.
+func (m *Model) expandKey(expand bool) {
+	if !m.tree {
+		return
+	}
+	cur := m.table.Cursor()
+	if cur < 0 || cur >= len(m.rows) || !m.rows[cur].Children {
+		return
+	}
+	pid := m.rows[cur].Proc.PID
+	if expand {
+		delete(m.collapsed, pid)
+	} else {
+		m.collapsed[pid] = true
+	}
+	m.rebuild()
 }
 
 func (m *Model) filterKey(key tea.KeyPressMsg) tea.Cmd {
@@ -171,56 +199,82 @@ func (m *Model) filterKey(key tea.KeyPressMsg) tea.Cmd {
 func (m *Model) confirmKey(key tea.KeyPressMsg) tea.Cmd {
 	c := m.confirm
 	switch key.String() {
+	case "left":
+		c.sig = (c.sig - 1 + len(c.sigs)) % len(c.sigs)
+	case "right":
+		c.sig = (c.sig + 1) % len(c.sigs)
 	case "y":
 		m.confirm = nil
-		var err error
-		if c.force {
-			err = procs.ForceKill(c.pid)
-		} else {
-			err = procs.Kill(c.pid)
-		}
-		if err != nil {
+		sig := c.sigs[c.sig]
+		if err := procs.SendSignal(c.pid, sig.Name); err != nil {
 			m.status = m.th.Styles.Crit.Render(err.Error())
 		} else {
-			m.status = m.th.Styles.OK.Render(fmt.Sprintf("signal sent to %d", c.pid))
+			m.status = m.th.Styles.OK.Render(fmt.Sprintf("SIG%s sent to %d", sig.Name, c.pid))
 		}
 	case "f", m.forceKey():
-		m.confirm.force = true
+		if idx := killSignalIndex(c.sigs); idx >= 0 {
+			c.sig = idx
+		}
 	case "n", "esc":
 		m.confirm = nil
 	}
 	return nil
 }
 
+// killSignalIndex finds KILL in the offerable signals; -1 when absent.
+func killSignalIndex(sigs []procs.Signal) int {
+	for i, s := range sigs {
+		if s.Name == "KILL" {
+			return i
+		}
+	}
+	return -1
+}
+
 func (m *Model) openConfirm(force bool) tea.Cmd {
-	if len(m.visible) == 0 {
+	if len(m.rows) == 0 {
 		return nil
 	}
-	p := m.visible[m.table.Cursor()]
-	m.confirm = &killConfirm{pid: p.PID, name: p.Name, force: force}
+	p := m.rows[m.table.Cursor()].Proc
+	c := &killConfirm{pid: p.PID, name: p.Name, sigs: procs.AvailableSignals()}
+	if force {
+		c.sig = killSignalIndex(c.sigs)
+		if c.sig < 0 {
+			c.sig = 0
+		}
+	}
+	m.confirm = c
 	return nil
 }
 
-// rebuild re-applies filter + sort, rebuilds rows and restores the
-// cursor on the previously selected PID.
+// rebuild re-applies filter + sort (or the tree builder), rebuilds rows
+// and restores the cursor on the previously selected PID.
 func (m *Model) rebuild() {
 	selected := int32(0)
-	if cur := m.table.Cursor(); cur >= 0 && cur < len(m.visible) {
-		selected = m.visible[cur].PID
+	if cur := m.table.Cursor(); cur >= 0 && cur < len(m.rows) {
+		selected = m.rows[cur].Proc.PID
 	}
 
-	m.visible = procs.Filter(append([]collector.Proc(nil), m.procs...), m.filter)
-	procs.Sort(m.visible, m.sort, m.desc)
+	filtered := procs.Filter(append([]collector.Proc(nil), m.procs...), m.filter)
+	if m.tree {
+		m.rows = procs.BuildTree(filtered, m.sort, m.desc, m.collapsed)
+	} else {
+		procs.Sort(filtered, m.sort, m.desc)
+		m.rows = make([]procs.TreeNode, len(filtered))
+		for i, p := range filtered {
+			m.rows[i] = procs.TreeNode{Proc: p}
+		}
+	}
 
-	rows := make([]table.Row, len(m.visible))
-	for i, p := range m.visible {
-		rows[i] = m.row(p)
+	rows := make([]table.Row, len(m.rows))
+	for i, node := range m.rows {
+		rows[i] = m.row(node)
 	}
 	m.table.SetRows(rows)
 
 	if selected != 0 {
-		for i, p := range m.visible {
-			if p.PID == selected {
+		for i, node := range m.rows {
+			if node.Proc.PID == selected {
 				m.table.SetCursor(i)
 				ui.EnsureRowVisible(&m.table, i)
 				break
@@ -229,7 +283,29 @@ func (m *Model) rebuild() {
 	}
 }
 
-func (m *Model) row(p collector.Proc) table.Row {
+// rowName renders the NAME cell; tree rows get depth guides and a
+// collapse marker.
+func (m *Model) rowName(node procs.TreeNode) string {
+	if !m.tree {
+		return node.Proc.Name
+	}
+	var b strings.Builder
+	for d := 0; d < node.Depth; d++ {
+		b.WriteString("│ ")
+	}
+	switch {
+	case node.Children && m.collapsed[node.Proc.PID]:
+		b.WriteString("▸ ")
+	case node.Children:
+		b.WriteString("▾ ")
+	case node.Depth > 0:
+		b.WriteString("└ ")
+	}
+	return b.String() + node.Proc.Name
+}
+
+func (m *Model) row(node procs.TreeNode) table.Row {
+	p := node.Proc
 	cpu := m.th.Value(m.cfg.Thresholds.CPUWarn, m.cfg.Thresholds.CPUCrit, p.CPU)
 	mem := m.th.Value(m.cfg.Thresholds.MemWarn, m.cfg.Thresholds.MemCrit, p.Mem)
 	state := m.th.Styles.Muted
@@ -243,7 +319,7 @@ func (m *Model) row(p collector.Proc) table.Row {
 	}
 	return table.Row{
 		fmt.Sprintf("%7d", p.PID),
-		p.Name,
+		m.rowName(node),
 		cpu.Render(fmt.Sprintf("%5.1f", p.CPU)),
 		mem.Render(fmt.Sprintf("%5.1f", p.Mem)),
 		fmt.Sprintf("%6s", format.Bytes(p.RSS)),
@@ -254,7 +330,7 @@ func (m *Model) row(p collector.Proc) table.Row {
 }
 
 // killKey returns the configured terminate key, lowercased; its uppercase
-// variant triggers a force kill.
+// variant jumps the picker straight to SIGKILL.
 func (m *Model) killKey() string { return strings.ToLower(m.cfg.Keys.Kill) }
 
 // forceKey returns the force-kill variant of the terminate key.
@@ -278,8 +354,11 @@ func (m *Model) infoView() string {
 	if !m.desc {
 		sortArrow = "↑"
 	}
-	info := m.th.Styles.Muted.Render(fmt.Sprintf("%d procs · sort: ", len(m.visible))) +
+	info := m.th.Styles.Muted.Render(fmt.Sprintf("%d procs · sort: ", len(m.rows))) +
 		m.th.Styles.HelpKey.Render(m.sort.String()+sortArrow)
+	if m.tree {
+		info += m.th.Styles.Muted.Render(" · ") + m.th.Styles.HelpKey.Render("tree")
+	}
 	if m.filter != "" {
 		info += m.th.Styles.Muted.Render(" · filter: ") + m.th.Styles.Warn.Render(m.filter)
 	}
@@ -292,8 +371,9 @@ func (m *Model) infoView() string {
 func (m *Model) footerView() string {
 	if m.confirm != nil {
 		return m.th.Styles.HelpText.Render("  ") +
-			m.th.Styles.HelpKey.Render("y") + m.th.Styles.HelpText.Render(" term  ") +
-			m.th.Styles.HelpKey.Render(m.forceKey()) + m.th.Styles.HelpText.Render(" kill -9  ") +
+			m.th.Styles.HelpKey.Render("←→") + m.th.Styles.HelpText.Render(" signal  ") +
+			m.th.Styles.HelpKey.Render("y") + m.th.Styles.HelpText.Render(" send  ") +
+			m.th.Styles.HelpKey.Render(m.forceKey()) + m.th.Styles.HelpText.Render(" kill  ") +
 			m.th.Styles.HelpKey.Render("esc") + m.th.Styles.HelpText.Render(" cancel")
 	}
 	if m.editing {
@@ -303,19 +383,17 @@ func (m *Model) footerView() string {
 		m.th.Styles.HelpKey.Render(m.cfg.Keys.Filter) + m.th.Styles.HelpText.Render(" filter  ") +
 		m.th.Styles.HelpKey.Render("s") + m.th.Styles.HelpText.Render(" sort  ") +
 		m.th.Styles.HelpKey.Render("S") + m.th.Styles.HelpText.Render(" reverse  ") +
-		m.th.Styles.HelpKey.Render(m.killKey()) + m.th.Styles.HelpText.Render(" term  ") +
-		m.th.Styles.HelpKey.Render(m.forceKey()) + m.th.Styles.HelpText.Render(" kill")
+		m.th.Styles.HelpKey.Render("t") + m.th.Styles.HelpText.Render(" tree  ") +
+		m.th.Styles.HelpKey.Render(m.killKey()) + m.th.Styles.HelpText.Render(" signal")
 }
 
 func (m *Model) confirmView() string {
-	action := "terminate"
-	if m.confirm.force {
-		action = "kill -9"
-	}
+	sig := m.confirm.sigs[m.confirm.sig]
 	body := m.th.Styles.Muted.Render(
-		fmt.Sprintf("%s %d (%s)?  ", action, m.confirm.pid, trunc(m.confirm.name, 24)))
+		fmt.Sprintf("SIG%s (%s) → %d (%s)?  ", sig.Name, sig.Desc,
+			m.confirm.pid, trunc(m.confirm.name, 24)))
 	return ui.Box(lipgloss.RoundedBorder(), m.th.Styles.Border, m.th.Styles.BorderChar,
-		m.th.Styles.BorderTitle, "KILL", body)
+		m.th.Styles.BorderTitle, "SIGNAL", body)
 }
 
 // columns builds the table header; NAME absorbs the remaining width.

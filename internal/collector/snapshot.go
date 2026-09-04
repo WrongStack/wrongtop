@@ -19,6 +19,7 @@ type Snapshot struct {
 	Sensors []Sensor   `json:"sensors,omitempty"`
 	Fans    []Fan      `json:"fans,omitempty"`
 	Battery *Battery   `json:"battery,omitempty"`
+	GPUs    []GPU      `json:"gpus,omitempty"`
 	Procs   []Proc     `json:"procs,omitempty"`
 	Disks   []Disk     `json:"disks,omitempty"`
 	DiskIOs []DiskIO   `json:"disk_ios,omitempty"`
@@ -37,6 +38,7 @@ type Proc struct {
 	User    string  `json:"user"`
 	State   string  `json:"state"` // single letter: R S Z T I ...
 	Threads int32   `json:"threads"`
+	Nice    int8    `json:"nice"`
 }
 
 // Host holds slow-changing system identity plus volatile load figures.
@@ -49,6 +51,7 @@ type Host struct {
 	Uptime   time.Duration `json:"uptime"`
 	Procs    int           `json:"procs"`
 	Load     [3]float64    `json:"load"`
+	Users    int           `json:"users"` // logged-in sessions
 }
 
 // CPU is one CPU sample. Percent is the aggregate across all logical
@@ -73,6 +76,18 @@ type Fan struct {
 	RPM  float64 `json:"rpm"`
 }
 
+// GPU is one graphics adapter reading. Util is the percent of the whole
+// adapter; memory figures are the adapter's own VRAM. A nil slice means
+// no GPU reporting is available (or no adapter exists).
+type GPU struct {
+	Index    int     `json:"index"`
+	Name     string  `json:"name"`
+	Util     float64 `json:"util_percent"`
+	MemUsed  uint64  `json:"mem_used"`
+	MemTotal uint64  `json:"mem_total"`
+	TempC    float64 `json:"temp_c"`
+}
+
 // Battery is the main battery state; a nil pointer means the machine has
 // no battery (or the platform does not report one).
 type Battery struct {
@@ -89,6 +104,8 @@ type Mem struct {
 	SwapTotal   uint64  `json:"swap_total"`
 	SwapUsed    uint64  `json:"swap_used"`
 	SwapPercent float64 `json:"swap_percent"`
+	ZramTotal   uint64  `json:"zram_total,omitempty"` // linux: compressed swap device
+	ZramUsed    uint64  `json:"zram_used,omitempty"`
 }
 
 // Disk is one mounted filesystem.

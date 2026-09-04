@@ -9,11 +9,12 @@ type procSys struct {
 	State string
 	UID   int32
 	PPID  int32
+	Nice  int8
 }
 
-// readProcSys returns state/uid/ppid for every process in one sysctl
-// call. gopsutil's StatusWithContext would otherwise spawn one `ps`
-// subprocess per process on darwin.
+// readProcSys returns state/uid/ppid/nice for every process in one
+// sysctl call. gopsutil's StatusWithContext would otherwise spawn one
+// `ps` subprocess per process on darwin.
 func readProcSys() (map[int32]procSys, error) {
 	kprocs, err := unix.SysctlKinfoProcSlice("kern.proc.all")
 	if err != nil {
@@ -26,6 +27,7 @@ func readProcSys() (map[int32]procSys, error) {
 			State: kinfoState(k.Proc.P_stat),
 			UID:   int32(k.Eproc.Ucred.Uid),
 			PPID:  k.Eproc.Ppid,
+			Nice:  k.Proc.P_nice,
 		}
 	}
 	return out, nil

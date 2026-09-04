@@ -7,6 +7,7 @@ type procSys struct {
 	State string
 	UID   int32
 	PPID  int32
+	Nice  int8
 }
 
 // readProcSys has no bulk implementation here; the collector falls back

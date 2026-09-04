@@ -181,7 +181,13 @@ func (m *Model) gridRows() []string {
 	)
 	rows := []string{row1, "", row2}
 	if rowC > 0 {
-		rows = append(rows, "", m.box(w-2, "PROCESSES", strings.Join(m.procView(w-6, rowC-3), "\n")))
+		procRows := rowC - 3
+		if gpus := len(m.snap.GPUs); gpus > 0 && procRows >= 7 {
+			gpuRows := min(3, gpus+1) // head + up to two adapters
+			rows = append(rows, "", m.box(w-2, "GPUS", strings.Join(m.gpuLines(w-6, gpuRows), "\n")))
+			procRows -= gpuRows + 1 // the box plus its gap row
+		}
+		rows = append(rows, "", m.box(w-2, "PROCESSES", strings.Join(m.procView(w-6, procRows), "\n")))
 	}
 	return rows
 }
@@ -238,6 +244,12 @@ func (m *Model) stackedRows() []string {
 	}
 
 	if procRows >= 2 {
+		if gpus := len(m.snap.GPUs); gpus > 0 && procRows >= 5 {
+			gpuRows := min(3, gpus+1)
+			rows = append(rows,
+				m.box(w-2, "GPUS", strings.Join(m.gpuLines(w-6, gpuRows), "\n")), "")
+			procRows -= gpuRows + 1
+		}
 		rows = append(rows, m.box(w-2, "PROCESSES", strings.Join(m.procView(w-6, procRows), "\n")))
 	}
 	return rows

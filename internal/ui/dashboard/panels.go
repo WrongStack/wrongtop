@@ -30,6 +30,9 @@ func (m *Model) hostView() []string {
 		m.kv("LOAD", loadStyle.Render(fmt.Sprintf("%.2f %.2f %.2f", h.Load[0], h.Load[1], h.Load[2]))),
 		m.kv("PROCS", strconv.Itoa(h.Procs)),
 	}
+	if h.Users > 0 {
+		lines = append(lines, m.kv("USERS", strconv.Itoa(h.Users)))
+	}
 	if s := m.hotSensor(); s != nil {
 		style := m.th.Value(m.cfg.Thresholds.TempWarn, m.cfg.Thresholds.TempCrit, s.TempC)
 		lines = append(lines, m.kv("TEMP", style.Render(fmt.Sprintf("%.0f°C", s.TempC))+
@@ -151,6 +154,16 @@ func (m *Model) memView(innerW int) []string {
 		)
 	} else {
 		lines = append(lines, m.th.Styles.Muted.Render("SWAP —"))
+	}
+
+	if mem.ZramTotal > 0 { // linux compressed swap device
+		pct := float64(mem.ZramUsed) / float64(mem.ZramTotal) * 100
+		lines = append(lines,
+			m.valuePct(pct, m.cfg.Thresholds.MemWarn, m.cfg.Thresholds.MemCrit)+
+				m.th.Styles.Muted.Render(fmt.Sprintf("  ZRAM  %s / %s",
+					format.Bytes(mem.ZramUsed), format.Bytes(mem.ZramTotal))),
+			m.bar(barW, pct, m.cfg.Thresholds.MemWarn, m.cfg.Thresholds.MemCrit),
+		)
 	}
 
 	lines = append(lines, strings.Split(m.memGraph.View(), "\n")...)
@@ -332,6 +345,31 @@ func (m *Model) sensorsLine(maxW int) string {
 		line += sep + cell
 	}
 	return line
+}
+
+// gpuLines renders one line per adapter: name, utilization bar, VRAM and
+// temperature. The first line is the panel head.
+func (m *Model) gpuLines(innerW, maxLines int) []string {
+	gpus := m.snap.GPUs
+	if len(gpus) == 0 || maxLines < 1 {
+		return nil
+	}
+	lines := []string{m.th.Styles.Muted.Render(fmt.Sprintf("%d adapters", len(gpus)))}
+	for _, g := range gpus[:min(len(gpus), max(0, maxLines-1))] {
+		barW := clampInt(innerW-42, 6, 20)
+		bar := canvas.Bar(barW, clamp01(g.Util/100),
+			m.th.Value(60, 90, g.Util), m.th.Styles.Muted) //nolint:mnd // gpu util thresholds
+		mem := ""
+		if g.MemTotal > 0 {
+			mem = fmt.Sprintf(" %s/%s", format.Bytes(g.MemUsed), format.Bytes(g.MemTotal))
+		}
+		temp := m.th.Value(m.cfg.Thresholds.TempWarn, m.cfg.Thresholds.TempCrit, g.TempC).
+			Render(fmt.Sprintf("%.0f°", g.TempC))
+		lines = append(lines,
+			m.th.Styles.Muted.Render(fmt.Sprintf("GPU%d ", g.Index))+
+				trunc(g.Name, 24)+" "+bar+fmt.Sprintf("%4.0f%%", g.Util)+mem+" "+temp)
+	}
+	return lines
 }
 
 // hotSensor returns the hottest reported sensor, if any.

@@ -39,6 +39,10 @@ type Collector struct {
 	// (temperatures, frequency, battery) to one sample per interval.
 	slowInterval time.Duration
 
+	// gpuInterval throttles nvidia-smi polling, which is a process
+	// spawn per sample.
+	gpuInterval time.Duration
+
 	mu         sync.Mutex
 	lastCPU    map[int32]float64 // pid -> user+system CPU seconds
 	lastDiskIO map[string]disk.IOCountersStat
@@ -52,12 +56,20 @@ type Collector struct {
 	cachedSensors []Sensor
 	cachedFans    []Fan
 	cachedBattery *Battery
+
+	gpuMu      sync.Mutex
+	lastGPU    time.Time
+	cachedGPUs []GPU
+	gpuFailed  bool // nvidia-smi missing; back off before retrying
 }
 
 // New returns a collector whose slow metrics are sampled at most once per
 // slowInterval (floored at 5s, since they are costly on some platforms).
 func New(refresh time.Duration) *Collector {
-	return &Collector{slowInterval: max(5*time.Second, refresh*5)}
+	return &Collector{
+		slowInterval: max(5*time.Second, refresh*5),
+		gpuInterval:  max(2*time.Second, refresh*2),
+	}
 }
 
 // Collect gathers one snapshot. Sections that fail are left zeroed;
@@ -77,6 +89,7 @@ func (c *Collector) Collect(ctx context.Context) Snapshot {
 	cpu := collectCPU(ctx)
 	cpu.FreqMHz = freq
 	mem := collectMem(ctx)
+	mem.ZramTotal, mem.ZramUsed = zramStats()
 
 	return Snapshot{
 		Time:    now,
@@ -86,6 +99,7 @@ func (c *Collector) Collect(ctx context.Context) Snapshot {
 		Sensors: sensors,
 		Fans:    fans,
 		Battery: battery,
+		GPUs:    c.collectGPUs(ctx, now),
 		Procs:   c.collectProcs(ctx, elapsed, mem.Total),
 		Disks:   c.collectDisks(ctx),
 		DiskIOs: c.collectDiskIO(ctx, elapsed),
@@ -143,6 +157,7 @@ func (c *Collector) collectHost(ctx context.Context) Host {
 	if avg, err := load.AvgWithContext(ctx); err == nil {
 		h.Load = [3]float64{avg.Load1, avg.Load5, avg.Load15}
 	}
+	h.Users = countUsers()
 	return h
 }
 
@@ -288,6 +303,7 @@ func (c *Collector) collectProcs(ctx context.Context, elapsed float64, memTotal 
 		if s, ok := sys[p.Pid]; ok {
 			pr.State = s.State
 			pr.PPID = s.PPID
+			pr.Nice = s.Nice
 			pr.User = c.userFor(s.UID)
 		} else {
 			if pp, err := p.PpidWithContext(ctx); err == nil {
@@ -298,6 +314,9 @@ func (c *Collector) collectProcs(ctx context.Context, elapsed float64, memTotal 
 			}
 			if u, err := p.UsernameWithContext(ctx); err == nil {
 				pr.User = u
+			}
+			if n, err := p.NiceWithContext(ctx); err == nil {
+				pr.Nice = int8(n)
 			}
 		}
 		out = append(out, pr)
@@ -451,6 +470,32 @@ func memPercent(rss, memTotal uint64) float64 {
 		return 0
 	}
 	return float64(rss) / float64(memTotal) * 100
+}
+
+// cstrField cuts a NUL-padded fixed-size field from a binary record.
+func cstrField(b []byte) string {
+	for i, c := range b {
+		if c == 0 {
+			return string(b[:i])
+		}
+	}
+	return string(b)
+}
+
+// Cmdline returns the full command line of one process, for the
+// process-detail view. It is deliberately on-demand: gopsutil spawns a
+// `ps` subprocess per call on darwin, so this must never run in the
+// collection loop.
+func Cmdline(ctx context.Context, pid int32) string {
+	p, err := process.NewProcess(pid)
+	if err != nil {
+		return ""
+	}
+	cl, err := p.CmdlineWithContext(ctx)
+	if err != nil {
+		return ""
+	}
+	return cl
 }
 
 // abbrevState reduces gopsutil status strings to a single htop-style letter.
