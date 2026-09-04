@@ -87,7 +87,7 @@ func Authorize(provided, expected string) bool {
 // Client is the TUI side of the protocol: dial, authenticate, then pull
 // snapshots one by one.
 type Client struct {
-	conn net.Conn
+	conn  net.Conn
 	Hello Hello
 }
 
