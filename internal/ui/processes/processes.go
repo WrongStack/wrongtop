@@ -411,9 +411,11 @@ func (m *Model) View() string {
 	}
 	parts := []string{m.infoView(), m.table.View()}
 	if m.confirm != nil {
-		parts = append(parts, "", lipgloss.PlaceHorizontal(m.width, lipgloss.Center, m.confirmView()))
+		parts = append(parts, "", lipgloss.PlaceHorizontal(m.width, lipgloss.Center,
+			ui.Shadow(m.confirmView(), m.th.Styles.Muted)))
 	} else if m.detail != nil {
-		parts = append(parts, "", lipgloss.PlaceHorizontal(m.width, lipgloss.Center, m.detailView()))
+		parts = append(parts, "", lipgloss.PlaceHorizontal(m.width, lipgloss.Center,
+			ui.Shadow(m.detailView(), m.th.Styles.Muted)))
 	}
 	parts = append(parts, m.footerView())
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)

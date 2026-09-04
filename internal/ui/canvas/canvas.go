@@ -136,6 +136,9 @@ func (g *Graph) View() string {
 
 	lines := make([]string, g.height)
 	for cy := 0; cy < g.height; cy++ {
+		// btop-style height gradient: the whole bottom row sits at the
+		// ramp's start, the top row at its end, regardless of values
+		rowStyle := g.styleFor(1 - float64(cy)/float64(max(1, g.height-1)))
 		var sb strings.Builder
 		for cx := 0; cx < g.width; cx++ {
 			var bits byte
@@ -148,9 +151,7 @@ func (g *Graph) View() string {
 					}
 				}
 			}
-			// color by the mean value of the two columns in this cell
-			v := (levels[cx*2] + levels[cx*2+1]) / 2 / float64(rows)
-			sb.WriteString(g.styleFor(v).Render(string(rune(brailleBase + int(bits)))))
+			sb.WriteString(rowStyle.Render(string(rune(brailleBase + int(bits)))))
 		}
 		lines[cy] = sb.String()
 	}

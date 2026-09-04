@@ -30,6 +30,7 @@ type Model struct {
 	swapGraph *canvas.Graph
 	rxGraph   *canvas.Graph
 	txGraph   *canvas.Graph
+	loadGraph *canvas.Graph
 
 	rxScale canvas.Scale // auto ceilings for the rate graphs
 	txScale canvas.Scale
@@ -39,6 +40,8 @@ type Model struct {
 
 	// per-interface total-rate history for the network panel sparklines
 	netHist map[string][]float64
+	// per-device total I/O rate history for the disks panel sparklines
+	ioHist map[string][]float64
 
 	density int // 0 full, 1 compact (fewer graphs), 2 minimal (HOST+CPU)
 
@@ -70,11 +73,13 @@ func New(cfg *config.Config, th *theme.Theme) *Model {
 		th:        th,
 		density:   density,
 		netHist:   make(map[string][]float64),
+		ioHist:    make(map[string][]float64),
 		cpuGraph:  canvas.New(60, 3, ramp(th, th.Palette.Green, th.Palette.Yellow, th.Palette.Orange, th.Palette.Red)),
 		memGraph:  canvas.New(28, 2, ramp(th, th.Palette.Blue, th.Palette.Purple, th.Palette.Red)),
 		swapGraph: canvas.New(28, 1, ramp(th, th.Palette.Purple, th.Palette.Red)),
 		rxGraph:   canvas.New(16, 2, ramp(th, th.Palette.Green, th.Palette.Cyan)),
 		txGraph:   canvas.New(16, 2, ramp(th, th.Palette.Blue, th.Palette.Cyan)),
+		loadGraph: canvas.New(28, 2, ramp(th, th.Palette.Cyan, th.Palette.Green)),
 	}
 	m.applyRamps(th)
 	return m
@@ -102,6 +107,7 @@ func (m *Model) SetTheme(th *theme.Theme) {
 	m.swapGraph.SetRamp(ramp(th, th.Palette.Purple, th.Palette.Red))
 	m.rxGraph.SetRamp(ramp(th, th.Palette.Green, th.Palette.Cyan))
 	m.txGraph.SetRamp(ramp(th, th.Palette.Blue, th.Palette.Cyan))
+	m.loadGraph.SetRamp(ramp(th, th.Palette.Cyan, th.Palette.Green))
 }
 
 // layoutClass picks how the panels arrange at the current size.
@@ -156,6 +162,7 @@ func (m *Model) SetSize(width, height int) {
 	m.swapGraph.Resize(memW, 1)
 	m.rxGraph.Resize(rxW, 2)
 	m.txGraph.Resize(rxW, 2)
+	m.loadGraph.Resize(max(16, hostCol-6), 2)
 }
 
 // Update implements ui.Tab.
@@ -166,6 +173,8 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 		m.live = true
 		m.recordNet()
 
+		cores := float64(max(1, len(m.snap.CPU.Cores)))
+		m.loadGraph.Push(clamp01(m.snap.Host.Load[0] / cores))
 		rx, tx := totalRates(m.snap.Nets)
 		m.cpuGraph.Push(clamp01(m.snap.CPU.Percent / 100))
 		m.memGraph.Push(clamp01(m.snap.Mem.Percent / 100))
@@ -187,6 +196,10 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 // in the NETWORK panel.
 const netSparkSamples = 10
 
+// ioSparkSamples is the history length of the per-device sparklines in
+// the DISKS panel.
+const ioSparkSamples = 10
+
 // recordNet appends one total-rate sample per interface for the panel
 // sparklines.
 func (m *Model) recordNet() {
@@ -196,6 +209,13 @@ func (m *Model) recordNet() {
 			h = h[len(h)-netSparkSamples:]
 		}
 		m.netHist[n.Name] = h
+	}
+	for _, d := range m.snap.DiskIOs {
+		h := append(m.ioHist[d.Name], d.ReadBytes+d.WriteBytes)
+		if len(h) > ioSparkSamples {
+			h = h[len(h)-ioSparkSamples:]
+		}
+		m.ioHist[d.Name] = h
 	}
 }
 
@@ -255,7 +275,7 @@ func (m *Model) gridPanels(h int) []ui.Panel {
 
 	panels := []ui.Panel{
 		{X: 0, Y: 0, W: hostW + 1, H: a, Title: "HOST", TitleStyle: title(pal.Blue),
-			Lines: m.hostView()},
+			Lines: m.hostView(a - 2)},
 		{X: hostW, Y: 0, W: w - hostW, H: a, Title: "CPU", TitleStyle: title(pal.Green),
 			Lines: m.cpuView(cpuInner, a-2)},
 	}
@@ -305,13 +325,13 @@ func (m *Model) stackedRows() []string {
 	var rows []string
 	if m.class() == layoutNarrow {
 		rows = append(rows,
-			m.box(w-2, "HOST", strings.Join(m.hostView(), "\n")), "",
+			m.box(w-2, "HOST", strings.Join(m.hostView(99), "\n")), "",
 			m.box(w-2, "CPU", strings.Join(m.cpuView(cpuInner, coreRows+4), "\n")), "",
 		)
 	} else {
 		rows = append(rows,
 			lipgloss.JoinHorizontal(lipgloss.Top,
-				m.box(hostCol-2, "HOST", padLines(m.hostView(), coreRows+4)),
+				m.box(hostCol-2, "HOST", padLines(m.hostView(coreRows+4), coreRows+4)),
 				" ",
 				m.box(cpuInner, "CPU", padLines(m.cpuView(cpuInner, coreRows+4), coreRows+4)),
 			), "",

@@ -406,7 +406,7 @@ func (m *Model) View() tea.View {
 func (m *Model) helpOverlay(content string) string {
 	return lipgloss.JoinVertical(lipgloss.Center,
 		lipgloss.Place(m.width, strings.Count(content, "\n")+1,
-			lipgloss.Center, lipgloss.Center, m.helpView()),
+			lipgloss.Center, lipgloss.Center, ui.Shadow(m.helpView(), m.theme.Styles.Muted)),
 	)
 }
 
@@ -414,7 +414,7 @@ func (m *Model) helpOverlay(content string) string {
 func (m *Model) alertsOverlay(content string) string {
 	return lipgloss.JoinVertical(lipgloss.Center,
 		lipgloss.Place(m.width, strings.Count(content, "\n")+1,
-			lipgloss.Center, lipgloss.Center, m.alertsOverlayView()),
+			lipgloss.Center, lipgloss.Center, ui.Shadow(m.alertsOverlayView(), m.theme.Styles.Muted)),
 	)
 }
 

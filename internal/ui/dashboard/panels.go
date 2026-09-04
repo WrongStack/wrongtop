@@ -16,8 +16,10 @@ import (
 )
 
 // hostView renders the identity panel: one kv row per fact, plus
-// temperature and battery rows when the platform reports them.
-func (m *Model) hostView() []string {
+// temperature, battery and fan rows when the platform reports them, and
+// a load-average graph when the row budget allows. The graph trails so
+// tight budgets drop it first.
+func (m *Model) hostView(maxRows int) []string {
 	h := m.snap.Host
 	loadStyle := m.th.Styles.Muted
 	cores := float64(len(m.snap.CPU.Cores))
@@ -63,6 +65,10 @@ func (m *Model) hostView() []string {
 			row += m.th.Styles.Muted.Render(fmt.Sprintf("  +%d", extra))
 		}
 		lines = append(lines, m.kv("FANS", row))
+	}
+	// the load graph trails: tight budgets truncate it first
+	if maxRows-len(lines) >= 2 {
+		lines = append(lines, strings.Split(m.loadGraph.View(), "\n")...)
 	}
 	return lines
 }
@@ -279,13 +285,14 @@ func (m *Model) diskView(innerW, maxRows int) []string {
 	copy(disks, m.snap.Disks)
 	sort.Slice(disks, func(i, j int) bool { return disks[i].Percent > disks[j].Percent })
 
-	barW := clampInt(innerW-24, 8, 20)
+	barW := clampInt(innerW-34, 6, 16)
 	for _, d := range disks[:min(len(disks), max(0, maxRows))] {
 		mount := trunc(filepath.Base(d.Mountpoint), 9)
 		name := m.th.Styles.Muted.Render(fmt.Sprintf("%-9s", mount))
-		bar := canvas.GradientBar(barW, d.Percent/100, m.ioRamp, m.th.Styles.Muted)
+		bar := canvas.GradientBar(barW, d.Percent/100, m.memRamp, m.th.Styles.Muted)
+		spark := canvas.Sparkline(m.ioHist[filepath.Base(d.Device)], m.ioRamp)
 		pct := m.valuePct(d.Percent, m.cfg.Thresholds.MemWarn, m.cfg.Thresholds.MemCrit)
-		lines = append(lines, name+bar+pct)
+		lines = append(lines, name+bar+pct+spark)
 	}
 	if len(disks) > maxRows {
 		lines = append(lines, m.th.Styles.Muted.Render(fmt.Sprintf("… +%d more", len(disks)-maxRows)))
