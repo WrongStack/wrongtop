@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -17,14 +18,16 @@ type helpSection struct {
 
 // helpSections builds the help overlay content for the current config so
 // overridden key bindings render as configured. Each line is "key  desc";
-// helpView splits on the first double space.
+// helpView splits on the first double space. Sections for disabled
+// modules are omitted.
 func (m *Model) helpSections() []helpSection {
-	return []helpSection{
+	secs := []helpSection{
 		{
 			title: "GLOBAL",
 			lines: []string{
-				"1-5        jump to tab",
+				fmt.Sprintf("1-%d        jump to tab", len(m.tabs)),
 				"tab        next tab (shift+tab back)",
+				"p          dashboard density preset",
 				"T          cycle color theme",
 				"R          reload config file",
 				"a          alert history",
@@ -34,6 +37,15 @@ func (m *Model) helpSections() []helpSection {
 			},
 		},
 		{
+			title: "DISKS",
+			lines: []string{
+				"left/right switch usage / I/O table",
+				"up/down    move selection",
+			},
+		},
+	}
+	if m.cfg.Modules.Processes {
+		secs = append(secs, helpSection{
 			title: "PROCESSES",
 			lines: []string{
 				m.cfg.Keys.Filter + "          filter by name, user or pid",
@@ -47,8 +59,10 @@ func (m *Model) helpSections() []helpSection {
 				"←→         pick signal · y sends",
 				"up/down    move selection",
 			},
-		},
-		{
+		})
+	}
+	if m.cfg.Modules.Docker {
+		secs = append(secs, helpSection{
 			title: "DOCKER",
 			lines: []string{
 				"enter      follow container logs",
@@ -57,8 +71,9 @@ func (m *Model) helpSections() []helpSection {
 				"r          restart container",
 				"esc        back from logs",
 			},
-		},
+		})
 	}
+	return secs
 }
 
 // killKey returns the configured terminate key, lowercased; its uppercase
@@ -84,6 +99,8 @@ func (m *Model) helpView() string {
 				key, desc, _ := strings.Cut(l, "  ")
 				key = strings.TrimSpace(key)
 				desc = strings.TrimSpace(desc)
+				// pad by display width: byte padding shoves the whole
+				// column around whenever a key is multi-byte ("←")
 				b.WriteString("\n  " + st.HelpKey.Render(pad(key, 10)) + st.HelpText.Render(desc))
 			}
 		}
@@ -100,13 +117,16 @@ func (m *Model) helpView() string {
 	b := &strings.Builder{}
 	b.WriteString(body)
 	b.WriteString("\n\n  " + st.HelpKey.Render("esc") + st.HelpText.Render(" close"))
-	return ui.Box(lipgloss.RoundedBorder(), st.Border, st.BorderChar, st.BorderTitle,
+	return ui.Box(ui.BorderFor(m.cfg.Border), st.Border, st.BorderChar, st.BorderTitle,
 		"WRONGTOP HELP", b.String())
 }
 
+// pad right-pads to n display cells (runes, not bytes).
 func pad(s string, n int) string {
-	for len(s) < n {
+	w := lipgloss.Width(s)
+	for w < n {
 		s += " "
+		w++
 	}
 	return s
 }

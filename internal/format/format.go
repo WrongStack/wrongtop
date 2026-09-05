@@ -34,6 +34,41 @@ func Rate(bps float64) string {
 	return fmt.Sprintf("%.1f %cb/s", bps/div, "KMGTPE"[exp])
 }
 
+// BytesCompact renders a byte count in binary units like Bytes, but
+// drops the decimal once the value reaches 100 of its unit, so wide
+// counts stay inside narrow table columns ("9.9 GiB", "128 GiB").
+func BytesCompact(n uint64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := uint64(unit), 0
+	for m := n / unit; m >= unit; m /= unit {
+		div *= unit
+		exp++
+	}
+	v := float64(n) / float64(div)
+	if v >= 100 {
+		return fmt.Sprintf("%.0f %ciB", v, "KMGTPE"[exp])
+	}
+	return fmt.Sprintf("%.1f %ciB", v, "KMGTPE"[exp])
+}
+
+// CPUPct renders a CPU percentage for a fixed 5-cell column: a busy
+// multi-thread process can exceed 100 (up to cores×100), so values ≥100
+// drop the decimal and values ≥1000 clamp — the column can never push a
+// table row out of alignment.
+func CPUPct(v float64) string {
+	switch {
+	case v >= 1000:
+		return " 999+"
+	case v >= 100:
+		return fmt.Sprintf("%5.0f", v)
+	default:
+		return fmt.Sprintf("%5.1f", v)
+	}
+}
+
 // Uptime renders a duration compactly, e.g. "3d 4h", "12m" or "45s".
 func Uptime(d time.Duration) string {
 	switch {

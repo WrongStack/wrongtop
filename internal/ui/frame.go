@@ -23,12 +23,13 @@ type Panel struct {
 
 // Frame renders panels inside one connected border grid. Adjacent panel
 // borders coincide, junctions resolve into the proper box-drawing
-// characters (├ ┤ ┬ ┴) and corners are rounded. Content that is smaller
-// than its panel is padded with spaces; overflow is truncated. Panels
-// with their own Border style color their border cells individually —
-// where two colors meet, the later panel in the slice wins. The outer
-// size is exactly the union of the panel rectangles.
-func Frame(panels []Panel, border lipgloss.Style) string {
+// characters (├ ┤ ┬ ┴) and corners come from the given border set
+// (rounded ╭╮╰╯ or square ┌┐└┘). Content that is smaller than its panel
+// is padded with spaces; overflow is truncated. Panels with their own
+// Border style color their border cells individually — where two colors
+// meet, the later panel in the slice wins. The outer size is exactly the
+// union of the panel rectangles.
+func Frame(panels []Panel, border lipgloss.Style, corners lipgloss.Border) string {
 	W, H := 0, 0
 	for _, p := range panels {
 		W = max(W, p.X+p.W)
@@ -76,6 +77,15 @@ func Frame(panels []Panel, border lipgloss.Style) string {
 		}
 		return mark[ny][nx] == '─' || mark[ny][nx] == '│'
 	}
+	// corner runes of the configured border set (rounded or square)
+	corner := func(s string) rune {
+		for _, r := range s {
+			return r
+		}
+		return '?'
+	}
+	tl, tr := corner(corners.TopLeft), corner(corners.TopRight)
+	bl, br := corner(corners.BottomLeft), corner(corners.BottomRight)
 	for y := 0; y < H; y++ {
 		for x := 0; x < W; x++ {
 			if mark[y][x] == ' ' {
@@ -95,13 +105,13 @@ func Frame(panels []Panel, border lipgloss.Style) string {
 			case e && w && s:
 				mark[y][x] = '┬'
 			case s && e:
-				mark[y][x] = '╭'
+				mark[y][x] = tl
 			case s && w:
-				mark[y][x] = '╮'
+				mark[y][x] = tr
 			case n && e:
-				mark[y][x] = '╰'
+				mark[y][x] = bl
 			case n && w:
-				mark[y][x] = '╯'
+				mark[y][x] = br
 			case n || s:
 				mark[y][x] = '│'
 			default:

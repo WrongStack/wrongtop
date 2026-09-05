@@ -68,10 +68,40 @@ func TestStatusBarLiveSummary(t *testing.T) {
 		Nets: []collector.NetIface{{Name: "en0", RxRate: 1.2e6, TxRate: 340e3}},
 	}})
 	out := m.statusBarView()
-	for _, want := range []string{"cpu", "34%", "mem 62%", "1.2 Mb/s", "340.0 Kb/s"} {
+	// net rates render in the compact short form (no "/s") so the chips
+	// keep their width budget on narrow terminals
+	for _, want := range []string{"cpu", "34%", "mem 62%", "↓1.2 Mb", "↑340.0 Kb"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("status bar summary missing %q: %q", want, out)
 		}
+	}
+}
+
+// TestTabBarAlertChips pins the new alert placement: threshold crossings
+// surface as chips on the tab bar's right zone (with the clock), on
+// every tab, and clicking that zone opens the alert history.
+func TestTabBarAlertChips(t *testing.T) {
+	cfg := config.Default()
+	m := New(cfg, "", "test")
+	m.width = 120
+	m.Update(collector.SnapshotMsg{Snap: collector.Snapshot{
+		Time: time.Now(),
+		CPU:  collector.CPU{Percent: 95}, // crit is 90
+	}})
+
+	out := m.tabBarView()
+	if !strings.Contains(out, "⚠ CPU 95%") {
+		t.Errorf("tab bar missing the alert chip: %q", out)
+	}
+	if m.alertZoneStart < 0 || m.alertZoneStart >= m.width {
+		t.Errorf("alert zone not mapped for clicks: start=%d width=%d", m.alertZoneStart, m.width)
+	}
+	if _, ok := m.tabAt(m.width-1); ok {
+		t.Error("right edge of the tab bar must not resolve to a tab")
+	}
+	// chip text is softened toward the background; check the crit color leaks through
+	if !strings.Contains(out, ";48;2;") {
+		t.Error("alert chip lost its background color")
 	}
 }
 

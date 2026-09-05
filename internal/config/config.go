@@ -43,6 +43,7 @@ type Config struct {
 	Keys       Keys       `yaml:"keys"`
 	ReadOnly   bool       `yaml:"read_only,omitempty"` // no process signaling
 	NerdFonts  bool       `yaml:"nerd_fonts,omitempty"`
+	Border     string     `yaml:"border,omitempty"` // rounded | square panel corners
 }
 
 // Modules toggles optional feature tabs.
@@ -86,10 +87,11 @@ func Default() *Config {
 // Sample is an annotated example configuration, printed by
 // `wrongtop config-sample`.
 const Sample = `# ~/.config/wrongtop/config.yaml
-theme: tokyo-night       # 8 built-ins, or a file in ~/.config/wrongtop/themes
+theme: tokyo-night       # 10 built-ins, or a file in ~/.config/wrongtop/themes
 refresh: 1s              # min 250ms, max 10s
 layout: full             # full | compact | minimal (p cycles it live)
-nerd_fonts: false        # powerline separators in the status bar
+nerd_fonts: false        # powerline separators in the status bar and tabs
+border: rounded          # rounded | square panel corners (btop-style toggle)
 
 modules:
   docker: true           # show the DOCKER tab (daemon optional)
@@ -160,6 +162,11 @@ func (c *Config) normalize() {
 	case "full", "compact", "minimal":
 	default:
 		c.Layout = "full"
+	}
+	switch c.Border {
+	case "rounded", "square":
+	default:
+		c.Border = "rounded"
 	}
 	if c.Thresholds.TempWarn <= 0 {
 		c.Thresholds.TempWarn = 60

@@ -6,6 +6,15 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
+// BorderFor resolves the configured panel corner style: "square" gives
+// btop's sharp corners, anything else the rounded default.
+func BorderFor(name string) lipgloss.Border {
+	if name == "square" {
+		return lipgloss.NormalBorder()
+	}
+	return lipgloss.RoundedBorder()
+}
+
 // Box draws content inside a border with the title embedded in the top
 // border line, btop-style. charStyle colors the border runes themselves
 // (a color-only style — passing the bordered style here would recursively

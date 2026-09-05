@@ -104,20 +104,23 @@ func TestGridHeightFits(t *testing.T) {
 	}
 }
 
-// TestAlertStrip pins the glances-style warning line.
-func TestAlertStrip(t *testing.T) {
+// TestAlertEvaluation pins the glances-style threshold evaluation; the
+// rendered chips live in the app-level tab bar now, not the dashboard.
+func TestAlertEvaluation(t *testing.T) {
 	cfg := config.Default()
-	m := New(cfg, theme.ByName(cfg.Theme))
-	m.SetSize(120, 38)
 	snap := fakeSnapshot()
 	snap.CPU.Percent = 95 // crit is 90
-	m.Update(collector.SnapshotMsg{Snap: snap})
 
-	if al := m.alerts(); len(al) != 1 || !al[0].Crit || !strings.Contains(al[0].Text, "CPU 95%") {
-		t.Fatalf("expected one critical CPU alert, got %+v", m.alerts())
+	al := EvaluateAlerts(cfg, snap)
+	if len(al) != 1 || !al[0].Crit || !strings.Contains(al[0].Text, "CPU 95%") {
+		t.Fatalf("expected one critical CPU alert, got %+v", al)
 	}
-	if out := m.View(); !contains(out, "⚠") || !contains(out, "CPU 95%") {
-		t.Error("view missing the alert strip")
+
+	m := New(cfg, theme.ByName(cfg.Theme))
+	m.SetSize(120, 38)
+	m.Update(collector.SnapshotMsg{Snap: snap})
+	if out := m.View(); contains(out, "⚠") {
+		t.Error("dashboard view should no longer render the alert strip")
 	}
 }
 

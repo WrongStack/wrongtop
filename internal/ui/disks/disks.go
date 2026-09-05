@@ -139,30 +139,45 @@ func (m *Model) focusedTable() *table.Model {
 
 func (m *Model) rebuild() {
 	rows := make([]table.Row, len(m.disks))
+	full := usageMode(m.width) == 2 // TYPE + USED/TOTAL columns present
 	for i, d := range m.disks {
 		style := m.th.Value(m.cfg.Thresholds.MemWarn, m.cfg.Thresholds.MemCrit, d.Percent)
-		rows[i] = table.Row{
-			trunc(d.Device, 16),
-			trunc(d.Mountpoint, 26),
-			trunc(d.FSType, 8),
-			style.Render(canvas.GradientBar(14, d.Percent/100, m.usageRamp, m.th.Styles.Muted)),
-			fmt.Sprintf("%7s", format.Bytes(d.Used)),
-			fmt.Sprintf("%7s", format.Bytes(d.Total)),
-			style.Render(fmt.Sprintf("%4.0f%%", d.Percent)),
+		row := table.Row{
+			ui.Trunc(d.Device, 16),
+			ui.Trunc(d.Mountpoint, 26),
 		}
+		if full {
+			row = append(row, ui.Trunc(d.FSType, 8))
+		}
+		row = append(row,
+			style.Render(canvas.GradientBar(14, d.Percent/100, m.usageRamp, m.th.Styles.Muted)))
+		if full {
+			// compact byte formatting keeps wide counts inside the
+			// 8-cell columns ("128 GiB" instead of a clipped "999.9 GiB")
+			row = append(row,
+				fmt.Sprintf("%7s", format.BytesCompact(d.Used)),
+				fmt.Sprintf("%7s", format.BytesCompact(d.Total)))
+		}
+		row = append(row, style.Render(fmt.Sprintf("%4.0f%%", d.Percent)))
+		rows[i] = row
 	}
 	m.table.SetRows(rows)
 
 	rows = make([]table.Row, len(m.diskIOs))
+	iops := m.width >= 76
 	for i, d := range m.diskIOs {
-		rows[i] = table.Row{
-			trunc(d.Name, 16),
+		row := table.Row{
+			ui.Trunc(d.Name, 16),
 			fmt.Sprintf("%9s", format.Rate(d.ReadBytes)),
 			fmt.Sprintf("%9s", format.Rate(d.WriteBytes)),
-			fmt.Sprintf("%8.0f", d.ReadIOPS),
-			fmt.Sprintf("%8.0f", d.WriteIOPS),
-			fmt.Sprintf("%4.0f%%", d.BusyPercent),
 		}
+		if iops {
+			row = append(row,
+				fmt.Sprintf("%8.0f", d.ReadIOPS),
+				fmt.Sprintf("%8.0f", d.WriteIOPS))
+		}
+		row = append(row, fmt.Sprintf("%4.0f%%", d.BusyPercent))
+		rows[i] = row
 	}
 	m.io.SetRows(rows)
 }
@@ -192,41 +207,52 @@ func (m *Model) View() string {
 	)
 }
 
+// usageMode picks which FILESYSTEMS columns fit the terminal: TYPE
+// drops first, then USED/TOTAL. Rows (rebuild) and headers (columns)
+// both consult it so the two never disagree.
+func usageMode(width int) int {
+	switch {
+	case width >= 100:
+		return 2
+	case width >= 76:
+		return 1
+	default:
+		return 0
+	}
+}
+
 func usageColumns(width int) []table.Column {
-	fixed := 16 + 26 + 8 + 14 + 8 + 8 + 5
+	fixed := 16 + 14 + 5 // DEVICE + USAGE + USE%
+	if usageMode(width) == 2 {
+		fixed += 8 + 8 + 8 // TYPE + USED + TOTAL
+	}
 	mountW := max(10, 26+(width-fixed))
-	return []table.Column{
+	cols := []table.Column{
 		{Title: "DEVICE", Width: 16},
 		{Title: "MOUNT", Width: mountW},
-		{Title: "TYPE", Width: 8},
-		{Title: "USAGE", Width: 14},
-		{Title: "USED", Width: 8},
-		{Title: "TOTAL", Width: 8},
-		{Title: "USE%", Width: 5},
 	}
+	if usageMode(width) == 2 {
+		cols = append(cols, table.Column{Title: "TYPE", Width: 8})
+	}
+	cols = append(cols, table.Column{Title: "USAGE", Width: 14})
+	if usageMode(width) == 2 {
+		cols = append(cols,
+			table.Column{Title: "USED", Width: 8},
+			table.Column{Title: "TOTAL", Width: 8})
+	}
+	return append(cols, table.Column{Title: "USE%", Width: 5})
 }
 
 func ioColumns(width int) []table.Column {
-	_ = width
-	return []table.Column{
+	cols := []table.Column{
 		{Title: "DEVICE", Width: 16},
 		{Title: "READ/s", Width: 9},
 		{Title: "WRITE/s", Width: 9},
-		{Title: "R IOPS", Width: 8},
-		{Title: "W IOPS", Width: 8},
-		{Title: "BUSY", Width: 5},
 	}
-}
-
-// trunc shortens s to at most n-1 runes plus an ellipsis, cutting at
-// rune boundaries so multi-byte names stay valid UTF-8.
-func trunc(s string, n int) string {
-	if len(s) <= n {
-		return s
+	if width >= 76 { // IOPS figures are the first to go on narrow terms
+		cols = append(cols,
+			table.Column{Title: "R IOPS", Width: 8},
+			table.Column{Title: "W IOPS", Width: 8})
 	}
-	r := []rune(s)
-	if len(r) <= n { // long in bytes, short in runes: nothing to drop
-		return s
-	}
-	return string(r[:n-1]) + "…"
+	return append(cols, table.Column{Title: "BUSY", Width: 5})
 }

@@ -20,7 +20,7 @@ func framePanels() []Panel {
 func noStyle(s string) lipgloss.Style { return lipgloss.NewStyle() }
 
 func TestFrameSizeAndBorder(t *testing.T) {
-	out := Frame(framePanels(), noStyle(""))
+	out := Frame(framePanels(), noStyle(""), lipgloss.RoundedBorder())
 	lines := strings.Split(out, "\n")
 	if len(lines) != 13 {
 		t.Fatalf("frame height = %d, want 13 (shared divider)", len(lines))
@@ -52,7 +52,7 @@ func TestFrameSizeAndBorder(t *testing.T) {
 }
 
 func TestFrameContentPlacement(t *testing.T) {
-	out := Frame(framePanels(), noStyle(""))
+	out := Frame(framePanels(), noStyle(""), lipgloss.RoundedBorder())
 	for _, want := range []string{"alpha", "beta", "gamma", "delta"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("frame missing content %q", want)
@@ -73,7 +73,7 @@ func TestFrameOverflowTruncates(t *testing.T) {
 			"line3", // beyond the 2-row content area
 		}},
 	}
-	out := Frame(panels, noStyle(""))
+	out := Frame(panels, noStyle(""), lipgloss.RoundedBorder())
 	lines := strings.Split(out, "\n")
 	if len(lines) != 4 {
 		t.Fatalf("height = %d, want 4", len(lines))
@@ -90,12 +90,34 @@ func TestFrameOverflowTruncates(t *testing.T) {
 }
 
 func TestFrameSinglePanel(t *testing.T) {
-	out := Frame([]Panel{{X: 0, Y: 0, W: 12, H: 5, Title: "ONLY", Lines: []string{"x"}}}, noStyle(""))
+	out := Frame([]Panel{{X: 0, Y: 0, W: 12, H: 5, Title: "ONLY", Lines: []string{"x"}}}, noStyle(""), lipgloss.RoundedBorder())
 	lines := strings.Split(out, "\n")
 	if len(lines) != 5 || lipgloss.Width(out) != 12 {
 		t.Fatalf("size = %dx%d, want 5x12", len(lines), lipgloss.Width(out))
 	}
 	if strings.Contains(lines[0], "┬") || strings.Contains(lines[0], "┼") {
 		t.Error("single panel should have plain corners")
+	}
+}
+
+// TestFrameSquareCorners pins the btop-style square border option: same
+// junctions, sharp corners.
+func TestFrameSquareCorners(t *testing.T) {
+	out := Frame(framePanels(), noStyle(""), lipgloss.NormalBorder())
+	lines := strings.Split(out, "\n")
+	if len(lines) != 13 {
+		t.Fatalf("frame height = %d, want 13", len(lines))
+	}
+	if !strings.Contains(lines[0], "┌") || !strings.Contains(lines[0], "┐") {
+		t.Errorf("square top corners missing: %q", lines[0])
+	}
+	if !strings.Contains(lines[12], "└") || !strings.Contains(lines[12], "┘") {
+		t.Errorf("square bottom corners missing: %q", lines[12])
+	}
+	if strings.ContainsAny(out, "╭╮╰╯") {
+		t.Error("rounded corners leaked into the square frame")
+	}
+	if !strings.Contains(lines[7], "┴") || !strings.Contains(lines[7], "├") {
+		t.Errorf("junctions must survive the corner swap: %q", lines[7])
 	}
 }

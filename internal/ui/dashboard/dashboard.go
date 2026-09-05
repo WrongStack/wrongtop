@@ -43,8 +43,6 @@ type Model struct {
 	// is rebuilt lazily and reused otherwise.
 	viewCache string
 
-	// per-interface total-rate history for the network panel sparklines
-	netHist map[string][]float64
 	// per-device total I/O rate history for the disks panel sparklines
 	ioHist map[string][]float64
 
@@ -55,6 +53,8 @@ type Model struct {
 	memRamp canvas.Ramp
 	ioRamp  canvas.Ramp
 	batRamp canvas.Ramp
+	rxRamp  canvas.Ramp // download share of the mixed meters
+	txRamp  canvas.Ramp // upload share of the mixed meters
 }
 
 // Density presets cycle with p and start from config layout.
@@ -77,14 +77,13 @@ func New(cfg *config.Config, th *theme.Theme) *Model {
 		cfg:       cfg,
 		th:        th,
 		density:   density,
-		netHist:   make(map[string][]float64),
 		ioHist:    make(map[string][]float64),
 		cpuGraph:  canvas.New(60, 3, ramp(th, th.Palette.Green, th.Palette.Yellow, th.Palette.Orange, th.Palette.Red)),
-		memGraph:  canvas.New(28, 2, ramp(th, th.Palette.Blue, th.Palette.Purple, th.Palette.Red)),
-		swapGraph: canvas.New(28, 1, ramp(th, th.Palette.Purple, th.Palette.Red)),
-		rxGraph:   canvas.New(16, 2, ramp(th, th.Palette.Green, th.Palette.Cyan)),
-		txGraph:   canvas.New(16, 2, ramp(th, th.Palette.Blue, th.Palette.Cyan)),
-		loadGraph: canvas.New(28, 2, ramp(th, th.Palette.Cyan, th.Palette.Green)),
+		memGraph:  canvas.New(34, 2, ramp(th, th.Palette.Blue, th.Palette.Purple, th.Palette.Red)),
+		swapGraph: canvas.New(34, 1, ramp(th, th.Palette.Purple, th.Palette.Red)),
+		rxGraph:   canvas.New(netCol-2, 2, ramp(th, th.Palette.Green, th.Palette.Cyan)),
+		txGraph:   canvas.New(netCol-2, 2, ramp(th, th.Palette.Blue, th.Palette.Cyan)),
+		loadGraph: canvas.New(34, 2, ramp(th, th.Palette.Cyan, th.Palette.Green)),
 	}
 	m.applyRamps(th)
 	return m
@@ -97,6 +96,8 @@ func (m *Model) applyRamps(th *theme.Theme) {
 	m.memRamp = canvas.Ramp{p.Blue, p.Purple, p.Red}
 	m.ioRamp = canvas.Ramp{p.Cyan, p.Green, p.Yellow, p.Red}
 	m.batRamp = canvas.Ramp{p.Red, p.Orange, p.Green}
+	m.rxRamp = canvas.Ramp{p.Green, p.Cyan}
+	m.txRamp = canvas.Ramp{p.Blue, p.Cyan}
 }
 
 // Title implements ui.Tab.
@@ -160,19 +161,19 @@ func (m *Model) SetSize(width, height int) {
 		cpuW = max(20, width-hostCol-2-13)
 		cpuH = canvas.BigNumberHeight
 	}
-	memW := max(14, hostCol-6)
-	rxW := max(10, netCol/2-1)
+	memW := max(14, hostCol-2)
+	rxW := max(10, netCol-2)
 	if m.class() == layoutNarrow {
 		cpuW = max(16, width-6)
 		memW = max(12, width/2-8)
-		rxW = max(8, width/4-1)
+		rxW = max(12, width-6)
 	}
 	m.cpuGraph.Resize(cpuW, cpuH)
 	m.memGraph.Resize(memW, 2)
 	m.swapGraph.Resize(memW, 1)
 	m.rxGraph.Resize(rxW, 2)
 	m.txGraph.Resize(rxW, 2)
-	m.loadGraph.Resize(max(16, hostCol-6), 2)
+	m.loadGraph.Resize(max(16, hostCol-2), 2)
 }
 
 // Update implements ui.Tab.
@@ -181,7 +182,7 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 	case collector.SnapshotMsg:
 		m.snap = msg.Snap
 		m.live = true
-		m.recordNet()
+		m.recordIO()
 		m.viewCache = "" // new data: rebuild lazily on the next View
 
 		cores := float64(max(1, len(m.snap.CPU.Cores)))
@@ -204,24 +205,13 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 	return nil
 }
 
-// netSparkSamples is the history length of the per-interface sparklines
-// in the NETWORK panel.
-const netSparkSamples = 10
-
 // ioSparkSamples is the history length of the per-device sparklines in
 // the DISKS panel.
 const ioSparkSamples = 10
 
-// recordNet appends one total-rate sample per interface for the panel
+// recordIO appends one total-rate sample per device for the disks panel
 // sparklines.
-func (m *Model) recordNet() {
-	for _, n := range m.snap.Nets {
-		h := append(m.netHist[n.Name], n.RxRate+n.TxRate)
-		if len(h) > netSparkSamples {
-			h = h[len(h)-netSparkSamples:]
-		}
-		m.netHist[n.Name] = h
-	}
+func (m *Model) recordIO() {
 	for _, d := range m.snap.DiskIOs {
 		h := append(m.ioHist[d.Name], d.ReadBytes+d.WriteBytes)
 		if len(h) > ioSparkSamples {
@@ -239,7 +229,7 @@ func (m *Model) View() string {
 		return ""
 	}
 	if !m.live {
-		wait := ui.Box(lipgloss.RoundedBorder(), m.th.Styles.Border, m.th.Styles.BorderChar,
+		wait := ui.Box(ui.BorderFor(m.cfg.Border), m.th.Styles.Border, m.th.Styles.BorderChar,
 			m.th.Styles.BorderTitle, "WRONGTOP", m.th.Styles.Muted.Render("waiting for samples…"))
 		return wait
 	}
@@ -250,20 +240,14 @@ func (m *Model) View() string {
 	return m.viewCache
 }
 
-// buildView renders the full dashboard once per snapshot.
+// buildView renders the full dashboard once per snapshot. Threshold
+// alerts live in the tab bar now (app level), so the grid always gets
+// the full height.
 func (m *Model) buildView() string {
 	// the btop-style connected grid: one frame, shared dividers
 	if m.class() == layoutGrid {
-		h := m.height
-		strip := m.alertsView()
-		if strip != "" {
-			h-- // the alert strip takes one row above the frame
-		}
-		frame := ui.Frame(m.gridPanels(h), m.th.Styles.BorderChar)
-		if strip != "" {
-			return strip + "\n" + frame
-		}
-		return frame
+		return ui.Frame(m.gridPanels(m.height), m.th.Styles.BorderChar,
+			ui.BorderFor(m.cfg.Border))
 	}
 
 	var rows []string
@@ -302,7 +286,7 @@ func (m *Model) gridPanels(h int) []ui.Panel {
 
 	panels := []ui.Panel{
 		{X: 0, Y: 0, W: hostW + 1, H: a, Title: "⌂ HOST", TitleStyle: title(pal.Blue),
-			Border: borders(pal.Blue), Lines: m.hostView(a - 2)},
+			Border: borders(pal.Blue), Lines: m.hostView(hostW-2, a-2)},
 		{X: hostW, Y: 0, W: w - hostW, H: a, Title: "⚡ CPU", TitleStyle: title(pal.Green),
 			Border: borders(pal.Green), Lines: m.cpuView(cpuInner, a-2)},
 	}
@@ -324,7 +308,7 @@ func (m *Model) gridPanels(h int) []ui.Panel {
 
 	procY, procH := a+b-2, c
 	if gpus := len(m.snap.GPUs); gpus > 0 && c >= 8 {
-		gh := min(5, gpus+3) // head + up to two adapters + borders
+		gh := min(gpus+3, 6) // up to four adapters + borders
 		panels = append(panels, ui.Panel{X: 0, Y: procY, W: w, H: gh, Title: "◆ GPUS",
 			TitleStyle: title(pal.Red), Border: borders(pal.Red), Lines: m.gpuLines(w-2, gh-2)})
 		procY += gh - 1 // share the border row
@@ -352,13 +336,13 @@ func (m *Model) stackedRows() []string {
 	var rows []string
 	if m.class() == layoutNarrow {
 		rows = append(rows,
-			m.box(w-2, "HOST", strings.Join(m.hostView(99), "\n")), "",
+			m.box(w-2, "HOST", strings.Join(m.hostView(w-4, 99), "\n")), "",
 			m.box(w-2, "CPU", strings.Join(m.cpuView(cpuInner, coreRows+4), "\n")), "",
 		)
 	} else {
 		rows = append(rows,
 			lipgloss.JoinHorizontal(lipgloss.Top,
-				m.box(hostCol-2, "HOST", padLines(m.hostView(coreRows+4), coreRows+4)),
+				m.box(hostCol-2, "HOST", padLines(m.hostView(hostCol-4, coreRows+4), coreRows+4)),
 				" ",
 				m.box(cpuInner, "CPU", padLines(m.cpuView(cpuInner, coreRows+4), coreRows+4)),
 			), "",
@@ -391,7 +375,7 @@ func (m *Model) stackedRows() []string {
 
 	if procRows >= 2 {
 		if gpus := len(m.snap.GPUs); gpus > 0 && procRows >= 5 {
-			gpuRows := min(3, gpus+1)
+			gpuRows := min(3, gpus)
 			rows = append(rows,
 				m.box(w-2, "GPUS", strings.Join(m.gpuLines(w-6, gpuRows), "\n")), "")
 			procRows -= gpuRows + 1
@@ -405,7 +389,7 @@ func (m *Model) stackedRows() []string {
 // cells so grid columns line up.
 func (m *Model) box(innerW int, title, content string) string {
 	padded := lipgloss.NewStyle().Width(innerW).Render(content)
-	return ui.Box(lipgloss.RoundedBorder(), m.th.Styles.Border, m.th.Styles.BorderChar,
+	return ui.Box(ui.BorderFor(m.cfg.Border), m.th.Styles.Border, m.th.Styles.BorderChar,
 		m.th.Styles.BorderTitle, title, padded)
 }
 

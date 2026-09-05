@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // dotBits maps a dot position inside a braille cell (row 0-3 top-down,
@@ -167,6 +168,25 @@ func (g *Graph) styleFor(v float64) lipgloss.Style {
 		i = len(g.styles) - 1
 	}
 	return g.styles[i]
+}
+
+// OverlayLabel writes label into the top-right corner of a rendered
+// block (e.g. a braille graph), shortening the block's top row to make
+// room — the place for a rate graph's auto-scale ceiling. The label is
+// expected pre-styled; when almost no room remains the block returns
+// unchanged.
+func OverlayLabel(block, label string) string {
+	rows := strings.Split(block, "\n")
+	if len(rows) == 0 || label == "" {
+		return block
+	}
+	top, lw := rows[0], lipgloss.Width(label)
+	tw := lipgloss.Width(top)
+	if tw-lw < 4 { // keep a usable graph strip left of the label
+		return block
+	}
+	rows[0] = ansi.Truncate(top, tw-lw, "") + label
+	return strings.Join(rows, "\n")
 }
 
 // eighthBlocks are the vertical fill runes from 1/8 to 7/8.

@@ -1,5 +1,5 @@
 // Package theme holds the color palettes and lipgloss styles used across
-// wrongtop: eight built-in palettes plus user-defined palettes loaded
+// wrongtop: ten built-in palettes plus user-defined palettes loaded
 // from ~/.config/wrongtop/themes/*.yml.
 package theme
 
@@ -146,6 +146,34 @@ var (
 		Orange: "#ebbcba",
 		Gray:   "#6e6a86",
 	}
+
+	EverforestDark = Palette{
+		Name:   "everforest-dark",
+		BG:     "#2f383e",
+		FG:     "#d3c6aa",
+		Red:    "#e67e80",
+		Green:  "#a7c080",
+		Yellow: "#dbbc7f",
+		Blue:   "#7fbbb3",
+		Purple: "#d699b6",
+		Cyan:   "#83c092",
+		Orange: "#e69875",
+		Gray:   "#9da9a0",
+	}
+
+	Kanagawa = Palette{
+		Name:   "kanagawa",
+		BG:     "#1f1f28",
+		FG:     "#dcd7ba",
+		Red:    "#e46876",
+		Green:  "#98bb6c",
+		Yellow: "#c0a36e",
+		Blue:   "#7e9cd8",
+		Purple: "#957fb8",
+		Cyan:   "#7aa89f",
+		Orange: "#ffa066",
+		Gray:   "#727169",
+	}
 )
 
 var registry = map[string]Palette{
@@ -157,6 +185,8 @@ var registry = map[string]Palette{
 	SolarizedDark.Name:   SolarizedDark,
 	OneDark.Name:         OneDark,
 	RosePine.Name:        RosePine,
+	EverforestDark.Name:  EverforestDark,
+	Kanagawa.Name:        Kanagawa,
 }
 
 // PaletteNames lists the built-in palette names in display order.
@@ -164,7 +194,7 @@ func PaletteNames() []string {
 	return []string{
 		GruvboxDark.Name, CatppuccinMocha.Name, Dracula.Name,
 		Nord.Name, TokyoNight.Name, SolarizedDark.Name,
-		OneDark.Name, RosePine.Name,
+		OneDark.Name, RosePine.Name, EverforestDark.Name, Kanagawa.Name,
 	}
 }
 

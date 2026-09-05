@@ -388,10 +388,10 @@ func (m *Model) row(node procs.TreeNode) table.Row {
 	return table.Row{
 		fmt.Sprintf("%7d", p.PID),
 		m.rowName(node),
-		cpuStyle.Render(fmt.Sprintf("%5.1f", p.CPU)),
+		cpuStyle.Render(format.CPUPct(p.CPU)),
 		mem.Render(fmt.Sprintf("%5.1f", p.Mem)),
 		fmt.Sprintf("%6s", format.Bytes(p.RSS)),
-		trunc(p.User, 12),
+		ui.Trunc(p.User, 12),
 		fmt.Sprintf("%3d", p.Threads),
 		state.Render(p.State),
 	}
@@ -422,7 +422,8 @@ func (m *Model) View() string {
 }
 
 // detailView renders the selected process's details: identity, resource
-// figures and the full command line.
+// figures and the full command line, hard-wrapped to the box width so
+// long commands stay readable instead of being clipped.
 func (m *Model) detailView() string {
 	p := m.detail.proc
 	st := m.th.Styles
@@ -431,7 +432,7 @@ func (m *Model) detailView() string {
 		cmd = p.Name
 	}
 	if w := m.width - 12; w > 8 {
-		cmd = trunc(cmd, w)
+		cmd = lipgloss.NewStyle().Width(w).Render(cmd)
 	}
 	kv := func(key, val string) string {
 		return st.Muted.Render(fmt.Sprintf("%-9s", key)) + val
@@ -446,7 +447,7 @@ func (m *Model) detailView() string {
 		"",
 		cmd,
 	}, "\n")
-	return ui.Box(lipgloss.RoundedBorder(), st.Border, st.BorderChar, st.BorderTitle,
+	return ui.Box(ui.BorderFor(m.cfg.Border), st.Border, st.BorderChar, st.BorderTitle,
 		"PROCESS", body)
 }
 
@@ -462,6 +463,22 @@ func (m *Model) infoView() string {
 	}
 	if m.filter != "" {
 		info += m.th.Styles.Muted.Render(" · filter: ") + m.th.Styles.Warn.Render(m.filter)
+	}
+	// glances-style session health: flag anomalies in the info line
+	var zombies, stopped int
+	for _, p := range m.procs {
+		switch p.State {
+		case "Z":
+			zombies++
+		case "T":
+			stopped++
+		}
+	}
+	if zombies > 0 {
+		info += m.th.Styles.Crit.Render(fmt.Sprintf(" · %d zombie", zombies))
+	}
+	if stopped > 0 {
+		info += m.th.Styles.Warn.Render(fmt.Sprintf(" · %d stopped", stopped))
 	}
 	if m.status != "" {
 		info += "  " + m.status
@@ -492,8 +509,8 @@ func (m *Model) confirmView() string {
 	sig := m.confirm.sigs[m.confirm.sig]
 	body := m.th.Styles.Muted.Render(
 		fmt.Sprintf("SIG%s (%s) → %d (%s)?  ", sig.Name, sig.Desc,
-			m.confirm.pid, trunc(m.confirm.name, 24)))
-	return ui.Box(lipgloss.RoundedBorder(), m.th.Styles.Border, m.th.Styles.BorderChar,
+			m.confirm.pid, ui.Trunc(m.confirm.name, 24)))
+	return ui.Box(ui.BorderFor(m.cfg.Border), m.th.Styles.Border, m.th.Styles.BorderChar,
 		m.th.Styles.BorderTitle, "SIGNAL", body)
 }
 
@@ -514,16 +531,3 @@ func columns(width int) []table.Column {
 }
 
 func tableWidth(width int) int { return max(40, width) }
-
-// trunc shortens s to at most n-1 runes plus an ellipsis, cutting at
-// rune boundaries so multi-byte names stay valid UTF-8.
-func trunc(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	r := []rune(s)
-	if len(r) <= n { // long in bytes, short in runes: nothing to drop
-		return s
-	}
-	return string(r[:n-1]) + "…"
-}

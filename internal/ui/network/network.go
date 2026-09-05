@@ -29,25 +29,23 @@ type Model struct {
 	nets          []collector.NetIface
 	live          bool
 
-	// per-interface total-rate history for the sparkline column
-	hist map[string][]float64
-	ramp canvas.Ramp
+	rxRamp canvas.Ramp // download share of the mixed meters
+	txRamp canvas.Ramp // upload share of the mixed meters
 }
 
-// sparkSamples is how many history points feed each sparkline, and the
-// width of the ACTIVITY column in cells.
-const sparkSamples = 20
+// actWidth is the width of the MIX column in cells.
+const actWidth = 20
 
 // New builds the network tab.
 func New(cfg *config.Config, th *theme.Theme) *Model {
 	t := table.New(table.WithFocused(true), table.WithWidth(100), table.WithHeight(20))
 	t.SetColumns(columns(100)) // sane defaults until SetSize arrives
 	return &Model{
-		cfg:   cfg,
-		th:    th,
-		table: t,
-		hist:  make(map[string][]float64),
-		ramp:  canvas.Ramp{th.Palette.Cyan, th.Palette.Green, th.Palette.Yellow, th.Palette.Red},
+		cfg:    cfg,
+		th:     th,
+		table:  t,
+		rxRamp: canvas.Ramp{th.Palette.Green, th.Palette.Cyan},
+		txRamp: canvas.Ramp{th.Palette.Blue, th.Palette.Cyan},
 	}
 }
 
@@ -57,7 +55,8 @@ func (m *Model) Title() string { return "⇅ NETWORK" }
 // SetTheme implements ui.Tab.
 func (m *Model) SetTheme(th *theme.Theme) {
 	m.th = th
-	m.ramp = canvas.Ramp{th.Palette.Cyan, th.Palette.Green, th.Palette.Yellow, th.Palette.Red}
+	m.rxRamp = canvas.Ramp{th.Palette.Green, th.Palette.Cyan}
+	m.txRamp = canvas.Ramp{th.Palette.Blue, th.Palette.Cyan}
 }
 
 // SetSize implements ui.Tab.
@@ -74,7 +73,6 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 	case collector.SnapshotMsg:
 		m.nets = msg.Snap.Nets
 		m.live = true
-		m.record()
 		m.rebuild()
 		return nil
 
@@ -102,19 +100,6 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 	return nil
 }
 
-// record appends one total-rate sample per interface, keeping the last
-// sparkSamples points. Interfaces that disappear keep their history so
-// a bounce (vpn0 down/up) does not blank the sparkline.
-func (m *Model) record() {
-	for _, n := range m.nets {
-		h := append(m.hist[n.Name], n.RxRate+n.TxRate)
-		if len(h) > sparkSamples {
-			h = h[len(h)-sparkSamples:]
-		}
-		m.hist[n.Name] = h
-	}
-}
-
 // rebuild sorts interfaces by current activity (busiest first) and
 // refreshes rows.
 func (m *Model) rebuild() {
@@ -124,16 +109,28 @@ func (m *Model) rebuild() {
 	})
 	slices.Reverse(nets)
 
+	totals := m.width >= 100
 	rows := make([]table.Row, len(nets))
 	for i, n := range nets {
-		rows[i] = table.Row{
-			fmt.Sprintf("%-12s", trunc(n.Name, 12)),
+		row := table.Row{
+			fmt.Sprintf("%-12s", ui.Trunc(n.Name, 12)),
 			m.th.Styles.OK.Render(fmt.Sprintf("%10s", format.Rate(n.RxRate))),
 			m.th.Styles.Warn.Render(fmt.Sprintf("%10s", format.Rate(n.TxRate))),
-			fmt.Sprintf("%11s", format.Bytes(n.RxTotal)),
-			fmt.Sprintf("%11s", format.Bytes(n.TxTotal)),
-			canvas.SparklineScaled(m.hist[n.Name], m.ramp),
 		}
+		if totals {
+			row = append(row,
+				fmt.Sprintf("%11s", format.Bytes(n.RxTotal)),
+				fmt.Sprintf("%11s", format.Bytes(n.TxTotal)))
+		}
+		// glances-style mixed meter: the green share of the bar is the
+		// download fraction, the blue share the upload fraction
+		total := n.RxRate + n.TxRate
+		share := 0.5
+		if total > 0 {
+			share = n.RxRate / total
+		}
+		row = append(row, canvas.DualBar(actWidth, share, m.rxRamp, m.txRamp))
+		rows[i] = row
 	}
 	m.table.SetRows(rows)
 }
@@ -167,26 +164,15 @@ func (m *Model) View() string {
 }
 
 func columns(width int) []table.Column {
-	_ = width
-	return []table.Column{
+	cols := []table.Column{
 		{Title: "IFACE", Width: 12},
 		{Title: "RX/s", Width: 10},
 		{Title: "TX/s", Width: 10},
-		{Title: "TOTAL RX", Width: 11},
-		{Title: "TOTAL TX", Width: 11},
-		{Title: "ACTIVITY", Width: sparkSamples},
 	}
-}
-
-// trunc shortens s to at most n-1 runes plus an ellipsis, cutting at
-// rune boundaries so multi-byte names stay valid UTF-8.
-func trunc(s string, n int) string {
-	if len(s) <= n {
-		return s
+	if width >= 100 { // lifetime totals are the first to go on narrow terms
+		cols = append(cols,
+			table.Column{Title: "TOTAL RX", Width: 11},
+			table.Column{Title: "TOTAL TX", Width: 11})
 	}
-	r := []rune(s)
-	if len(r) <= n { // long in bytes, short in runes: nothing to drop
-		return s
-	}
-	return string(r[:n-1]) + "…"
+	return append(cols, table.Column{Title: "MIX ↓↑", Width: actWidth})
 }

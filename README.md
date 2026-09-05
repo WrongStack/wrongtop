@@ -6,17 +6,17 @@
 
 - **Single-screen overview** (btop-style): the dashboard packs every major panel into one **connected border frame** — shared dividers, resolved junctions, per-panel colored titles — with host identity, CPU, memory/swap/zram, network, disks, GPUs and the busiest processes in a responsive grid
 - **Gradient meters** — bars sweep the palette ramp across their length (CPU, memory, swap, zram, disks, GPUs, battery), btop-style, and process CPU% is colored along the same ramp
-- **Dashboard panels** — host (OS, kernel, uptime, load average, logged-in users, temperatures, battery, fan speeds), total CPU with a scrolling braille graph, per-core usage bars and frequency, RAM/swap/zram bars with history, network down/up graphs with the busiest interfaces, per-mount usage bars with aggregate I/O rates, and a top-process panel
+- **Dashboard panels** — host (OS, kernel, uptime, load average, logged-in users, temperatures, battery, fan speeds), total CPU with a scrolling braille graph, per-core usage bars and frequency, RAM/swap/zram bars with history, network down/up graphs with **auto-scale ceilings labeled in the corners** and glances-style **mixed meters** per interface (green share = download, blue share = upload), per-mount usage bars with aggregate I/O rates, and a top-process panel
 - **Sensors** — CPU temperatures and fan RPMs on every platform it can get them: on macOS (arm64) WrongTop reads the AppleSMC directly via IOKit — real P-core temperatures that neither btop nor glances show on a Mac — plus battery state through IOPowerSources; Linux uses hwmon; Windows tries ACPI thermal zones and WMI
 - **GPU monitoring** — utilization, VRAM and temperature through NVIDIA's NVML driver library, loaded at runtime (no cgo, no helper process); the panel appears only when a GPU exists
-- **Alerts with history** (glances-style): a warning strip appears when thresholds are crossed, and `a` opens a timestamped session history with severities and durations
-- **Live status bar** — threshold-colored cpu/mem chips, network throughput, temperature and battery at the bottom, btop-style
+- **Alerts with history** (glances-style): active warnings surface as chips on the **tab bar's right zone** — visible on every tab, never reflowing the grid — and `a` (or clicking the zone) opens a timestamped session history with severities and durations
+- **Live status bar** — threshold-colored cpu/mem chips, network throughput, temperature and battery at the bottom, btop-style; chips and hints degrade gracefully on narrow terminals so the line never wraps
 - **Process table** — sortable, live-filterable list with PID, name, CPU%, MEM%, RSS, user, thread count, nice value and htop-style state letter; **tree view** with collapse/expand; a full **signal menu** (TERM, KILL, INT, HUP, QUIT, STOP, CONT); per-process **detail box** with the full command line
-- **Docker** — container list with live CPU, memory, network and block I/O fetched concurrently; start / stop / restart; follow-mode log viewer with scrollback. The daemon is optional: the tab shows a notice and retries until it appears
+- **Docker** — container list with live CPU, memory, **network and block I/O rates** (computed from the lifetime counters), start / stop / restart; follow-mode log viewer with scrollback and severity coloring. The daemon is optional: the tab shows a notice and retries until it appears
 - **Disks** — filesystem usage bars plus per-device read/write rates, IOPS and busy time
 - **Network** — per-interface throughput and totals, sorted by current activity
-- **Themes** — eight built-in palettes (`tokyo-night` is the default) plus **user-defined theme files** loaded from `~/.config/wrongtop/themes/*.yml`; `T` cycles themes live without losing state
-- **Soft modern UI** — chips, active tabs and alert strips blend their background toward the palette, panel titles carry icons, and `nerd_fonts: true` upgrades the status bar to powerline separators
+- **Themes** — ten built-in palettes (`tokyo-night` is the default, `everforest-dark` and `kanagawa` among them) plus **user-defined theme files** loaded from `~/.config/wrongtop/themes/*.yml`; `T` cycles themes live without losing state
+- **Soft modern UI** — chips, active tabs and alert chips blend their background toward the palette, panel titles carry icons, `nerd_fonts: true` upgrades the status bar and tabs to powerline separators, and `border: rounded | square` switches the panel corners btop-style
 - **Live config** — `R` hot-reloads the YAML (theme, refresh, thresholds, layout, key bindings); `p` cycles dashboard density presets
 - **Remote monitoring** — `wrongtop serve` streams snapshots to `wrongtop connect` clients over a token-authenticated, read-only protocol; `wrongtop dump` prints JSON lines for scripts
 - **Zero-config** — runs fine without a config file; YAML overrides are optional
@@ -130,10 +130,11 @@ Disks tab:
 WrongTop works with no configuration. To customize, run `wrongtop config-sample` and start from the annotated output.
 
 ```yaml
-theme: tokyo-night       # 8 built-ins, or a file in ~/.config/wrongtop/themes
+theme: tokyo-night       # 10 built-ins, or a file in ~/.config/wrongtop/themes
 refresh: 1s               # sample interval, clamped to 250ms–10s
 layout: full              # full | compact | minimal (p cycles it live)
-nerd_fonts: false         # true: powerline separators in the status bar
+nerd_fonts: false         # true: powerline separators in the status bar and tabs
+border: rounded           # rounded | square panel corners (btop-style toggle)
 
 modules:                  # optional tabs
   processes: true         # show the process table
@@ -191,7 +192,7 @@ gray: "#5d7a94"
 | `internal/theme` | built-in + user palettes and derived lipgloss styles |
 | `internal/ui` | tab contract, scroll-proof table click mapping, titled borders |
 | `internal/ui/canvas` | braille time-series graphs and fraction bars |
-| `internal/ui/dashboard` | the overview tab: btop-style grid of host/CPU/memory/network/disk/GPU/process panels + alert strip |
+| `internal/ui/dashboard` | the overview tab: btop-style grid of host/CPU/memory/network/disk/GPU/process panels |
 | `internal/ui/processes` | the process table tab: flat/tree, filters, signal menu, detail box |
 | `internal/ui/docker` | the containers tab |
 | `internal/ui/disks` | the filesystems and I/O tab |

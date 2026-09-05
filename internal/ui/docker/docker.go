@@ -38,6 +38,12 @@ type Model struct {
 	cons   []dockerclient.Container
 	err    error // last poll/connect error
 
+	// rate computation: docker reports lifetime counters, so rates come
+	// from diffing consecutive polls (first sighting yields zeros)
+	prev     map[string]dockerclient.Container // by container ID
+	prevTime time.Time
+	rates    map[string][4]float64 // ↓ ↑ net B/s, read/write block B/s, by ID
+
 	logFor    string // container name shown in the log pane ("" = list mode)
 	logs      []string
 	logScroll int // lines kept off the tail; 0 = follow the stream
@@ -86,6 +92,7 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 	case dockerclient.UpdateMsg:
 		m.client = msg.Client
 		m.err = msg.Err
+		m.updateRates(msg.Containers)
 		m.cons = msg.Containers
 		m.rebuild()
 		return nil
@@ -267,7 +274,41 @@ func (m *Model) waitForLog() tea.Cmd {
 	}
 }
 
+// updateRates turns the cumulative per-container counters into rates by
+// diffing against the previous poll. A counter that goes backwards
+// (container restart) yields zero instead of wrapping huge.
+func (m *Model) updateRates(cons []dockerclient.Container) {
+	now := time.Now()
+	if m.rates == nil {
+		m.rates = make(map[string][4]float64)
+		m.prev = make(map[string]dockerclient.Container)
+	}
+	dt := now.Sub(m.prevTime).Seconds()
+	next := make(map[string][4]float64, len(cons))
+	for _, c := range cons {
+		var r [4]float64
+		if p, ok := m.prev[c.ID]; ok && dt > 0 {
+			delta := func(cur, old uint64) float64 {
+				if cur < old {
+					return 0
+				}
+				return float64(cur-old) / dt
+			}
+			r = [4]float64{
+				delta(c.NetRx, p.NetRx),
+				delta(c.NetTx, p.NetTx),
+				delta(c.BlkR, p.BlkR),
+				delta(c.BlkW, p.BlkW),
+			}
+		}
+		next[c.ID] = r
+		m.prev[c.ID] = c
+	}
+	m.rates, m.prevTime = next, now
+}
+
 func (m *Model) rebuild() {
+	l := dockerLayoutFor(m.width)
 	rows := make([]table.Row, len(m.cons))
 	cpuStyle := func(v float64) lipgloss.Style {
 		return lipgloss.NewStyle().Foreground(lipgloss.Color(m.cpuRamp.At(min(v, 100) / 100)))
@@ -283,19 +324,33 @@ func (m *Model) rebuild() {
 			state = m.th.Styles.Warn.Render(c.State)
 		}
 		memPct := m.th.Value(m.cfg.Thresholds.MemWarn, m.cfg.Thresholds.MemCrit, c.MemPct)
-		rows[i] = table.Row{
-			c.Name,
-			trunc(c.Image, 32),
+		row := table.Row{
+			ui.Trunc(c.Name, 20),
+			ui.Trunc(c.Image, l.imageW),
 			state,
-			cpuStyle(c.CPU).Render(fmt.Sprintf("%5.1f", c.CPU)),
+			cpuStyle(c.CPU).Render(format.CPUPct(c.CPU)),
 			fmt.Sprintf("%10s", format.Bytes(c.Mem)),
 			memPct.Render(fmt.Sprintf("%4.0f%%", c.MemPct)),
-			fmt.Sprintf("%9s / %-9s", format.Bytes(c.NetRx), format.Bytes(c.NetTx)),
-			fmt.Sprintf("%9s / %-9s", format.Bytes(c.BlkR), format.Bytes(c.BlkW)),
-			trunc(c.Status, 22),
 		}
+		if l.net {
+			r := m.rates[c.ID]
+			row = append(row, fmt.Sprintf("%9s / %-9s", shortRate(r[0]), shortRate(r[1])))
+		}
+		if l.block {
+			r := m.rates[c.ID]
+			row = append(row, fmt.Sprintf("%9s / %-9s", shortRate(r[2]), shortRate(r[3])))
+		}
+		if l.status {
+			row = append(row, ui.Trunc(c.Status, 22))
+		}
+		rows[i] = row
 	}
 	m.table.SetRows(rows)
+}
+
+// shortRate renders a rate without the "/s" suffix for dense columns.
+func shortRate(bps float64) string {
+	return strings.TrimSuffix(format.Rate(bps), "/s")
 }
 
 // View implements ui.Tab.
@@ -321,7 +376,14 @@ func (m *Model) View() string {
 		if len(body) > maxLines {
 			body = body[:maxLines]
 		}
-		return lipgloss.JoinVertical(lipgloss.Left, head, strings.Join(body, "\n"))
+		styled := make([]string, len(body))
+		for i, l := range body {
+			if lipgloss.Width(l) > m.width {
+				l = ui.Trunc(l, m.width) // rune-safe clip, no soft wrap
+			}
+			styled[i] = m.severityStyle(l).Render(l)
+		}
+		return lipgloss.JoinVertical(lipgloss.Left, head, strings.Join(styled, "\n"))
 	}
 
 	if m.client == nil {
@@ -346,6 +408,23 @@ func (m *Model) View() string {
 	)
 }
 
+// severityStyle colors a log line by the level words it carries — a
+// cheap heuristic, but enough to make walls of container output scannable.
+func (m *Model) severityStyle(line string) lipgloss.Style {
+	l := strings.ToLower(line)
+	st := m.th.Styles
+	switch {
+	case strings.Contains(l, "fatal"), strings.Contains(l, "panic"),
+		strings.Contains(l, "error"), strings.Contains(l, "err:"):
+		return st.Crit
+	case strings.Contains(l, "warn"):
+		return st.Warn
+	case strings.Contains(l, "debug"), strings.Contains(l, "trace"):
+		return st.Muted
+	}
+	return lipgloss.NewStyle()
+}
+
 func (m *Model) errMsg() string {
 	if m.err != nil {
 		return m.err.Error()
@@ -353,30 +432,50 @@ func (m *Model) errMsg() string {
 	return "start Docker Desktop or the daemon, then come back — wrongtop retries automatically."
 }
 
-func columns(width int) []table.Column {
-	_ = width
-	return []table.Column{
-		{Title: "NAME", Width: 20},
-		{Title: "IMAGE", Width: 32},
-		{Title: "STATE", Width: 9},
-		{Title: "CPU%", Width: 5},
-		{Title: "MEM", Width: 10},
-		{Title: "MEM%", Width: 5},
-		{Title: "NET RX/TX", Width: 21},
-		{Title: "BLOCK R/W", Width: 21},
-		{Title: "STATUS", Width: 22},
-	}
+// dockerLayout decides which container columns fit the terminal. The
+// full table needs ~160 columns, so extras drop in priority order
+// (BLOCK, then STATUS, then NET) and IMAGE absorbs the remaining slack.
+type dockerLayout struct {
+	net, block, status bool
+	imageW             int
 }
 
-// trunc shortens s to at most n-1 runes plus an ellipsis, cutting at
-// rune boundaries so multi-byte names stay valid UTF-8.
-func trunc(s string, n int) string {
-	if len(s) <= n {
-		return s
+func dockerLayoutFor(width int) dockerLayout {
+	l := dockerLayout{imageW: 12}
+	switch {
+	case width >= 146:
+		l.net, l.block, l.status = true, true, true
+		l.imageW = max(12, width-132)
+	case width >= 118:
+		l.net, l.status = true, true
+		l.imageW = max(12, width-109)
+	case width >= 94:
+		l.net = true
+		l.imageW = max(12, width-85)
+	default:
+		l.imageW = max(12, width-62)
 	}
-	r := []rune(s)
-	if len(r) <= n { // long in bytes, short in runes: nothing to drop
-		return s
+	return l
+}
+
+func columns(width int) []table.Column {
+	l := dockerLayoutFor(width)
+	cols := []table.Column{
+		{Title: "NAME", Width: 20},
+		{Title: "IMAGE", Width: l.imageW},
+		{Title: "STATE", Width: 9},
+		{Title: "CPU%", Width: 6},
+		{Title: "MEM", Width: 10},
+		{Title: "MEM%", Width: 5},
 	}
-	return string(r[:n-1]) + "…"
+	if l.net {
+		cols = append(cols, table.Column{Title: "NET ↓/↑", Width: 21})
+	}
+	if l.block {
+		cols = append(cols, table.Column{Title: "BLOCK ↓/↑", Width: 21})
+	}
+	if l.status {
+		cols = append(cols, table.Column{Title: "STATUS", Width: 22})
+	}
+	return cols
 }

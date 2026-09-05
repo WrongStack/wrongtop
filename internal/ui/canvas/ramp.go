@@ -86,6 +86,30 @@ func GradientBar(width int, frac float64, ramp Ramp, empty lipgloss.Style) strin
 // one-line sparklines.
 var sparkBlocks = []rune{' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'}
 
+// DualBar renders a glances-style mixed meter of width cells: the first
+// frac of the bar interpolates across rampA and the remainder across
+// rampB, so a single always-full bar visualizes a direction split
+// (download vs upload, read vs write) while the magnitude lives in the
+// neighboring rate text.
+func DualBar(width int, frac float64, rampA, rampB Ramp) string {
+	if width < 1 {
+		return ""
+	}
+	frac = min(max(frac, 0), 1)
+	aWidth := min(int(frac*float64(width)+0.5), width)
+
+	var sb strings.Builder
+	for i := range width {
+		ramp := rampB
+		if i < aWidth {
+			ramp = rampA
+		}
+		t := (float64(i) + 0.5) / float64(width)
+		sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(ramp.At(t))).Render("█"))
+	}
+	return sb.String()
+}
+
 // Sparkline renders the values (each 0..1) as one row of block glyphs,
 // colored per glyph by ramping on the value.
 func Sparkline(values []float64, ramp Ramp) string {

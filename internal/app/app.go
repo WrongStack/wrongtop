@@ -5,6 +5,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -58,6 +59,11 @@ type Model struct {
 	tabs          []ui.Tab
 	helpMode      bool
 	alertsMode    bool // alert-history overlay
+
+	// tab bar geometry, recorded by tabBarView so mouse hits map onto
+	// whatever style the tabs currently render with
+	tabBounds      [][2]int // clickable [start,end) of each tab
+	alertZoneStart int      // left edge of the alert/clock zone; -1 = none
 
 	alerts     []*alertEvent
 	openAlerts map[string]*alertEvent
@@ -256,6 +262,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if mouse.Button == tea.MouseLeft {
 				if n, ok := m.tabAt(mouse.X); ok {
 					m.active = n
+				} else if m.alertZoneStart >= 0 && mouse.X >= m.alertZoneStart {
+					m.alertsMode = !m.alertsMode // alert chips + clock zone
 				}
 			}
 			return m, nil
@@ -452,77 +460,132 @@ func (m *Model) alertsOverlayView() string {
 		b.WriteString(ev.Start.Format("15:04:05") + "  " +
 			style.Render(marker+" "+ev.Text) +
 			st.Muted.Render(fmt.Sprintf("  [%s]", dur.Round(time.Second))))
-		if i < len(m.alerts) && b.Len() > 0 {
+		if b.Len() > 0 {
 			b.WriteString("\n")
 		}
 	}
 	footer := st.HelpKey.Render("esc") + st.HelpText.Render(" close")
-	return ui.Box(lipgloss.RoundedBorder(), st.Border, st.BorderChar, st.BorderTitle,
+	return ui.Box(ui.BorderFor(m.cfg.Border), st.Border, st.BorderChar, st.BorderTitle,
 		"ALERTS", strings.TrimRight(b.String(), "\n")+"\n\n  "+footer)
 }
 
-// tabAt resolves a click on the tab bar row to a tab index. Tab styles
-// pad each label with one blank column on either side.
+// tabAt resolves a click on the tab bar row to a tab index. Bounds are
+// recorded by tabBarView, so any tab style (padding, powerline caps)
+// stays clickable without duplicating width math.
 func (m *Model) tabAt(x int) (int, bool) {
-	start := 0
-	for i, t := range m.tabs {
-		w := lipgloss.Width(t.Title()) + 2
-		if x >= start && x < start+w {
+	for i, b := range m.tabBounds {
+		if x >= b[0] && x < b[1] {
 			return i, true
 		}
-		start += w
 	}
 	return 0, false
 }
 
-// tabBarView renders the tab strip.
+// tabBarView renders the tab strip: tabs left; active alert chips and a
+// clock right. The alert zone is app chrome — glances-style warnings
+// that stay visible on every tab and never reflow the dashboard grid.
 func (m *Model) tabBarView() string {
+	st := m.theme.Styles
+	pal := m.theme.Palette
 	parts := make([]string, len(m.tabs))
+	m.tabBounds = make([][2]int, len(m.tabs))
+	x := 0
 	for i, t := range m.tabs {
 		label := t.Title()
+		var part string
 		if i == m.active {
-			parts[i] = m.theme.Styles.TabActive.Render(label)
-			continue
+			part = st.TabActive.Render(label)
+			if m.cfg.NerdFonts { // powerline cap on the active chip
+				part += lipgloss.NewStyle().
+					Foreground(lipgloss.Color(m.theme.Soft(pal.Purple))).
+					Background(lipgloss.Color(pal.BG)).
+					Render("")
+			}
+		} else {
+			part = st.TabInactive.Render(label)
 		}
-		parts[i] = m.theme.Styles.TabInactive.Render(label)
+		w := lipgloss.Width(part)
+		m.tabBounds[i] = [2]int{x, x + w}
+		x += w
+		parts[i] = part
 	}
-	return m.theme.Styles.TabBar.Render(strings.Join(parts, ""))
+	left := st.TabBar.Render(strings.Join(parts, ""))
+
+	right := m.tabBarRight()
+	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
+	if gap < 1 { // under width pressure: a bare alert count, then nothing
+		if n := len(m.openAlerts); n > 0 {
+			right = m.chip(pal.Red, fmt.Sprintf("⚠ %d", n))
+			gap = m.width - lipgloss.Width(left) - lipgloss.Width(right)
+		}
+	}
+	m.alertZoneStart = -1
+	if gap < 1 {
+		right = "" // the tabs win; alerts stay on `a` and the status bar
+		gap = max(0, m.width-lipgloss.Width(left))
+	} else {
+		m.alertZoneStart = m.width - lipgloss.Width(right)
+	}
+	return left + strings.Repeat(" ", gap) + right
+}
+
+// tabBarRight renders the alert/clock zone: active alerts (critical
+// first, at most three chips) followed by the clock.
+func (m *Model) tabBarRight() string {
+	pal := m.theme.Palette
+	events := make([]*alertEvent, 0, len(m.openAlerts))
+	for _, ev := range m.openAlerts {
+		events = append(events, ev)
+	}
+	sort.Slice(events, func(i, j int) bool { // crit leads, then oldest
+		if events[i].Crit != events[j].Crit {
+			return events[i].Crit
+		}
+		return events[i].Start.Before(events[j].Start)
+	})
+	var chips []string
+	for _, ev := range events[:min(3, len(events))] {
+		bg := pal.Yellow
+		if ev.Crit {
+			bg = pal.Red
+		}
+		chips = append(chips, m.chip(bg, "⚠ "+ev.Text))
+	}
+	if n := len(events) - 3; n > 0 {
+		chips = append(chips, m.chip(pal.Red, fmt.Sprintf("⚠ +%d", n)))
+	}
+	chips = append(chips, m.theme.Styles.Muted.Render(time.Now().Format("15:04")))
+	return strings.Join(chips, " ")
 }
 
 // statusBarView renders the btop-style bottom line: an identity chip
-// left, live chips center, key hints right.
+// left, live chips center, key hints right. Under width pressure the
+// hints collapse to the essentials and the lowest-priority chip drops
+// (battery → temperature → network) so the line never wraps.
 func (m *Model) statusBarView() string {
 	pal := m.theme.Palette
-	logo := lipgloss.NewStyle().Background(lipgloss.Color(m.theme.Soft(pal.Purple))).
-		Foreground(lipgloss.Color(pal.FG)).Bold(true).
-		Padding(0, 1).Render("WRONGTOP")
+	logo := m.chip(pal.Purple, "WRONGTOP")
 	left := logo + " " + m.theme.Styles.Muted.Render("v"+m.version)
 	if m.stream != nil {
-		left += " " + lipgloss.NewStyle().Background(lipgloss.Color(m.theme.Soft(pal.Orange))).
-			Foreground(lipgloss.Color(pal.FG)).Bold(true).
-			Padding(0, 1).Render("REMOTE "+m.remoteAddr)
+		left += " " + m.chip(pal.Orange, "REMOTE "+m.remoteAddr)
 	}
 
-	right := m.theme.Styles.HelpKey.Render(fmt.Sprintf("1-%d", len(m.tabs))) +
-		m.theme.Styles.HelpText.Render(" tabs  ") +
-		m.theme.Styles.HelpKey.Render("T") +
-		m.theme.Styles.HelpText.Render(" theme  ") +
-		m.theme.Styles.HelpKey.Render("R") +
-		m.theme.Styles.HelpText.Render(" reload  ") +
-		m.theme.Styles.HelpKey.Render("a") +
-		m.theme.Styles.HelpText.Render(" alerts  ") +
-		m.theme.Styles.HelpKey.Render("?") +
-		m.theme.Styles.HelpText.Render(" help  ") +
-		m.theme.Styles.HelpKey.Render("q") +
-		m.theme.Styles.HelpText.Render(" quit")
+	right := m.statusHints(true)
+	if lipgloss.Width(left)+lipgloss.Width(right) > m.width {
+		right = m.statusHints(false)
+	}
 
 	mid := ""
 	if time.Now().Before(m.flashUntil) && m.flash != "" {
-		mid = lipgloss.NewStyle().Background(lipgloss.Color(m.theme.Soft(pal.Yellow))).
-			Foreground(lipgloss.Color(pal.FG)).Bold(true).
-			Padding(0, 1).Render(m.flash)
+		mid = m.chip(pal.Yellow, m.flash)
 	} else if !m.latest.Time.IsZero() {
-		mid = m.liveSummary()
+		chips := m.liveChips()
+		sep := m.chipSep()
+		for len(chips) > 0 &&
+			lipgloss.Width(left)+lipgloss.Width(right)+lipgloss.Width(strings.Join(chips, sep)) > m.width {
+			chips = chips[:len(chips)-1] // lowest priority drops first
+		}
+		mid = strings.Join(chips, sep)
 	}
 
 	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - lipgloss.Width(mid)
@@ -534,6 +597,35 @@ func (m *Model) statusBarView() string {
 		strings.Repeat(" ", half) + mid + strings.Repeat(" ", gap-half) + right)
 }
 
+// statusHints renders the right-hand key hints; the short form appears
+// when the terminal is too narrow for the full list.
+func (m *Model) statusHints(full bool) string {
+	st := m.theme.Styles
+	if !full {
+		return st.HelpKey.Render("?") + st.HelpText.Render(" help  ") +
+			st.HelpKey.Render("q") + st.HelpText.Render(" quit")
+	}
+	return st.HelpKey.Render(fmt.Sprintf("1-%d", len(m.tabs))) +
+		st.HelpText.Render(" tabs  ") +
+		st.HelpKey.Render("T") + st.HelpText.Render(" theme  ") +
+		st.HelpKey.Render("R") + st.HelpText.Render(" reload  ") +
+		st.HelpKey.Render("a") + st.HelpText.Render(" alerts  ") +
+		st.HelpKey.Render("?") + st.HelpText.Render(" help  ") +
+		st.HelpKey.Render("q") + st.HelpText.Render(" quit")
+}
+
+// chipSep is the separator between status chips: a powerline arrow when
+// nerd fonts are on, a blank column otherwise.
+func (m *Model) chipSep() string {
+	if m.cfg.NerdFonts {
+		return lipgloss.NewStyle().
+			Foreground(lipgloss.Color(m.theme.Palette.Gray)).
+			Background(lipgloss.Color(m.theme.Palette.BG)).
+			Render("")
+	}
+	return " "
+}
+
 // chip renders a status-bar segment with a softened background, modern
 // soft-UI style: solid primaries read harsh in large fills.
 func (m *Model) chip(bg, text string) string {
@@ -541,11 +633,12 @@ func (m *Model) chip(bg, text string) string {
 		Foreground(lipgloss.Color(m.theme.Palette.FG)).Padding(0, 1).Render(text)
 }
 
-// liveSummary renders the center chips: cpu, memory, network rates and,
-// when the platform reports them, temperature and battery.
-func (m *Model) liveSummary() string {
+// liveChips renders the center chips in drop-priority order: cpu,
+// memory, network rates, temperature, battery.
+func (m *Model) liveChips() []string {
 	pal := m.theme.Palette
 	t := m.cfg.Thresholds
+	short := func(bps float64) string { return strings.TrimSuffix(format.Rate(bps), "/s") }
 
 	bgFor := func(warn, crit, v float64) string {
 		switch {
@@ -557,16 +650,11 @@ func (m *Model) liveSummary() string {
 			return pal.Green
 		}
 	}
-	var b strings.Builder
+	var chips []string
 	spark := canvas.Sparkline(m.cpuHist, canvas.Ramp{pal.BG}) // uncolored inside the chip
-	sep := " "
-	if m.cfg.NerdFonts {
-		sep = m.theme.Styles.Muted.Render("")
-	}
-	b.WriteString(m.chip(bgFor(t.CPUWarn, t.CPUCrit, m.latest.CPU.Percent),
+	chips = append(chips, m.chip(bgFor(t.CPUWarn, t.CPUCrit, m.latest.CPU.Percent),
 		"cpu "+spark+fmt.Sprintf(" %.0f%%", m.latest.CPU.Percent)))
-	b.WriteString(sep)
-	b.WriteString(m.chip(bgFor(t.MemWarn, t.MemCrit, m.latest.Mem.Percent),
+	chips = append(chips, m.chip(bgFor(t.MemWarn, t.MemCrit, m.latest.Mem.Percent),
 		fmt.Sprintf("mem %.0f%%", m.latest.Mem.Percent)))
 
 	var rx, tx float64
@@ -574,13 +662,11 @@ func (m *Model) liveSummary() string {
 		rx += n.RxRate
 		tx += n.TxRate
 	}
-	b.WriteString(sep)
-	b.WriteString(m.chip(pal.Blue, fmt.Sprintf("↓%s ↑%s", format.Rate(rx), format.Rate(tx))))
+	chips = append(chips, m.chip(pal.Blue, fmt.Sprintf("↓%s ↑%s", short(rx), short(tx))))
 
 	if len(m.latest.Sensors) > 0 {
 		s := m.latest.Sensors[0]
-		b.WriteString(sep)
-		b.WriteString(m.chip(bgFor(t.TempWarn, t.TempCrit, s.TempC),
+		chips = append(chips, m.chip(bgFor(t.TempWarn, t.TempCrit, s.TempC),
 			fmt.Sprintf("%.0f°C", s.TempC)))
 	}
 	if bat := m.latest.Battery; bat != nil {
@@ -592,8 +678,7 @@ func (m *Model) liveSummary() string {
 		if !bat.Charging && bat.Percent <= 30 {
 			bg = pal.Red
 		}
-		b.WriteString(sep)
-		b.WriteString(m.chip(bg, fmt.Sprintf("%s%.0f%%", icon, bat.Percent)))
+		chips = append(chips, m.chip(bg, fmt.Sprintf("%s%.0f%%", icon, bat.Percent)))
 	}
-	return b.String()
+	return chips
 }
