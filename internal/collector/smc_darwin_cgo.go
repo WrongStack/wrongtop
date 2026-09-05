@@ -173,6 +173,13 @@ import (
 var (
 	smcOnce   sync.Once
 	smcOpenOK bool
+
+	// discovery cache: enumerating ~2k SMC keys costs hundreds of
+	// milliseconds and key names/types never change at runtime — find
+	// the candidates once, then every refresh only re-reads values.
+	smcDiscoverOnce sync.Once
+	smcTempKeys     []string
+	smcFanKeys      []string
 )
 
 // smcReady opens the AppleSMC connection exactly once and reports
@@ -228,32 +235,53 @@ func smcKeyAt(i int) (string, error) {
 	return C.GoString(&key[0]), nil
 }
 
-// platformTemps enumerates SMC temperature keys and returns CPU-relevant
-// readings. Two families carry CPU silicon temperatures: TPD* floats on
-// Apple Silicon (P-core cluster) and Tp*/Te*/TC<n>* sp78 keys on older
-// machines (cores and package). Skin (Ts*), GPU (Tg*/TG*), battery
-// (TB*) and power-stage (TCM*/TCH*) sensors are deliberately excluded.
+// smcTempFamily reports whether a key name belongs to a CPU silicon
+// temperature family.
+func smcTempFamily(key string) bool {
+	if len(key) != 4 || key[0] != 'T' {
+		return false
+	}
+	return key[:3] == "TPD" || // Apple Silicon P-core cluster (flt)
+		key[1] == 'p' || // P cores, older chips (sp78)
+		key[1] == 'e' || // E cores
+		key[1] == 'C' && key[2] >= '0' && key[2] <= '9' // Intel core/package
+}
+
+// smcDiscover walks the whole SMC key table once and records the CPU
+// temperature candidates and fan-current keys. Key names and data types
+// are fixed for the machine's lifetime, so this never runs again.
+func smcDiscover() {
+	total, err := smcKeyCount()
+	if err != nil || total <= 0 || total > 8192 {
+		return
+	}
+	for i := 0; i < total; i++ {
+		key, err := smcKeyAt(i)
+		if err != nil {
+			continue
+		}
+		switch {
+		case smcTempFamily(key):
+			if typ, _, err := smcRead(key); err == nil && (typ == "sp78" || typ == "flt ") {
+				smcTempKeys = append(smcTempKeys, key)
+			}
+		case len(key) == 4 && key[0] == 'F' && key[1] >= '0' && key[1] <= '9' &&
+			key[2] == 'A' && key[3] == 'c':
+			smcFanKeys = append(smcFanKeys, key)
+		}
+	}
+}
+
+// platformTemps re-reads the discovered CPU temperature keys. Skin
+// (Ts*), GPU (Tg*/TG*), battery (TB*) and power-stage (TCM*/TCH*)
+// sensors are excluded by the family filter at discovery time.
 func platformTemps(ctx context.Context) []Sensor {
 	if !smcReady() {
 		return nil
 	}
-	total, err := smcKeyCount()
-	if err != nil || total <= 0 || total > 8192 {
-		return nil
-	}
+	smcDiscoverOnce.Do(smcDiscover)
 	var out []Sensor
-	for i := 0; i < total; i++ {
-		key, err := smcKeyAt(i)
-		if err != nil || key[0] != 'T' {
-			continue
-		}
-		cpu := key[:3] == "TPD" && len(key) == 4 || // Apple Silicon P-cores
-			len(key) == 4 && key[1] == 'p' || // P cores, older chips
-			len(key) == 4 && key[1] == 'e' || // E cores
-			len(key) == 4 && key[1] == 'C' && key[2] >= '0' && key[2] <= '9' // Intel core/package
-		if !cpu {
-			continue
-		}
+	for _, key := range smcTempKeys {
 		typ, data, err := smcRead(key)
 		if err != nil {
 			continue
@@ -280,26 +308,17 @@ func smcTemperature(typ string, data []byte) float64 {
 	}
 }
 
-// readFans reports every SMC fan's current RPM (keys FNum, F<i>Ac with
-// fpe2 fixed-point values). Some machines do not expose FNum, so the
-// first few fan-current keys are probed regardless.
+// readFans reports every SMC fan's current RPM from the discovered
+// F<i>Ac keys (fpe2 fixed-point values). Fanless machines discover no
+// keys and report nothing.
 func readFans() []Fan {
 	if !smcReady() {
 		return nil
 	}
-	n := 0
-	if typ, data, err := smcRead("FNum"); err == nil && len(data) >= 1 && (typ == "ui8 " || typ == "ui8") {
-		n = int(data[0])
-	}
-	if n == 0 {
-		n = 4 // probe fallback
-	}
-	if n > 8 {
-		n = 8
-	}
+	smcDiscoverOnce.Do(smcDiscover)
 	var fans []Fan
-	for i := 0; i < n; i++ {
-		typ, data, err := smcRead(fmt.Sprintf("F%dAc", i))
+	for _, key := range smcFanKeys {
+		typ, data, err := smcRead(key)
 		if err != nil || typ != "fpe2" || len(data) < 2 {
 			continue
 		}
@@ -307,7 +326,7 @@ func readFans() []Fan {
 		if rpm <= 0 {
 			continue
 		}
-		fans = append(fans, Fan{Name: fmt.Sprintf("FAN%d", i), RPM: rpm})
+		fans = append(fans, Fan{Name: "FAN" + key[1:2], RPM: rpm})
 	}
 	return fans
 }

@@ -38,6 +38,11 @@ type Model struct {
 	snap collector.Snapshot
 	live bool // at least one snapshot received
 
+	// view cache: View() runs after every event (mouse, keys, focus),
+	// but the frame only depends on snapshot/size/theme/density — so it
+	// is rebuilt lazily and reused otherwise.
+	viewCache string
+
 	// per-interface total-rate history for the network panel sparklines
 	netHist map[string][]float64
 	// per-device total I/O rate history for the disks panel sparklines
@@ -101,6 +106,7 @@ func (m *Model) Title() string { return "⌂ DASHBOARD" }
 // they must be rebuilt alongside the styles.
 func (m *Model) SetTheme(th *theme.Theme) {
 	m.th = th
+	m.viewCache = ""
 	m.applyRamps(th)
 	m.cpuGraph.SetRamp(ramp(th, th.Palette.Green, th.Palette.Yellow, th.Palette.Orange, th.Palette.Red))
 	m.memGraph.SetRamp(ramp(th, th.Palette.Blue, th.Palette.Purple, th.Palette.Red))
@@ -142,6 +148,7 @@ func (m *Model) class() layoutClass {
 // SetSize implements ui.Tab.
 func (m *Model) SetSize(width, height int) {
 	m.width, m.height = width, height
+	m.viewCache = ""
 	if width < 1 || height < 1 {
 		return
 	}
@@ -175,6 +182,7 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 		m.snap = msg.Snap
 		m.live = true
 		m.recordNet()
+		m.viewCache = "" // new data: rebuild lazily on the next View
 
 		cores := float64(max(1, len(m.snap.CPU.Cores)))
 		m.loadGraph.Push(clamp01(m.snap.Host.Load[0] / cores))
@@ -189,6 +197,7 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 	case tea.KeyPressMsg:
 		if msg.String() == "p" { // cycle density presets
 			m.density = (m.density + 1) % 3
+			m.viewCache = ""
 		}
 		return nil
 	}
@@ -222,7 +231,9 @@ func (m *Model) recordNet() {
 	}
 }
 
-// View implements ui.Tab.
+// View implements ui.Tab. The rendered frame is cached: View runs after
+// every event (mouse, keys, focus), but the output only changes when a
+// snapshot lands or the size/theme/density changes.
 func (m *Model) View() string {
 	if m.width < 1 {
 		return ""
@@ -232,7 +243,15 @@ func (m *Model) View() string {
 			m.th.Styles.BorderTitle, "WRONGTOP", m.th.Styles.Muted.Render("waiting for samples…"))
 		return wait
 	}
+	if m.viewCache != "" {
+		return m.viewCache
+	}
+	m.viewCache = m.buildView()
+	return m.viewCache
+}
 
+// buildView renders the full dashboard once per snapshot.
+func (m *Model) buildView() string {
 	// the btop-style connected grid: one frame, shared dividers
 	if m.class() == layoutGrid {
 		h := m.height

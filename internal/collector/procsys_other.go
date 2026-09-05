@@ -4,6 +4,7 @@ package collector
 
 // procSys holds process fields that can be read in bulk on this platform.
 type procSys struct {
+	Name  string
 	State string
 	UID   int32
 	PPID  int32

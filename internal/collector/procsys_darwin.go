@@ -6,13 +6,14 @@ import "golang.org/x/sys/unix"
 
 // procSys holds process fields that can be read in bulk on this platform.
 type procSys struct {
+	Name  string
 	State string
 	UID   int32
 	PPID  int32
 	Nice  int8
 }
 
-// readProcSys returns state/uid/ppid/nice for every process in one
+// readProcSys returns name/state/uid/ppid/nice for every process in one
 // sysctl call. gopsutil's StatusWithContext would otherwise spawn one
 // `ps` subprocess per process on darwin.
 func readProcSys() (map[int32]procSys, error) {
@@ -23,7 +24,15 @@ func readProcSys() (map[int32]procSys, error) {
 	out := make(map[int32]procSys, len(kprocs))
 	for i := range kprocs {
 		k := &kprocs[i]
+		name := make([]byte, 0, len(k.Proc.P_comm))
+		for _, c := range k.Proc.P_comm {
+			if c == 0 {
+				break
+			}
+			name = append(name, byte(c))
+		}
 		out[k.Proc.P_pid] = procSys{
+			Name:  string(name),
 			State: kinfoState(k.Proc.P_stat),
 			UID:   int32(k.Eproc.Ucred.Uid),
 			PPID:  k.Eproc.Ppid,

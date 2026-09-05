@@ -184,7 +184,10 @@ var sensorHints = []string{"cpu", "core", "thermal", "package", "k10temp", "acpi
 // gopsutil yields nothing the platform hook gets a chance (AppleSMC on
 // darwin, ACPI thermal zones on windows).
 func collectSensors(ctx context.Context) []Sensor {
-	out := gopsutilSensors(ctx)
+	var out []Sensor
+	if gopsutilSensorsAvailable {
+		out = gopsutilSensors(ctx)
+	}
 	if len(out) == 0 {
 		out = platformTemps(ctx)
 	}
@@ -274,33 +277,19 @@ func (c *Collector) collectProcs(ctx context.Context, elapsed float64, memTotal 
 		return nil
 	}
 
-	// Bulk state/uid/ppid where available (darwin); nil means fall back
-	// to per-process calls below.
+	// Bulk identity (darwin) and libproc usage sampling (darwin+cgo)
+	// replace the per-process gopsutil calls where available; nil maps
+	// mean "fall back to per-process gopsutil" below.
 	sys, _ := readProcSys()
+	usage, _ := readAllProcUsage()
 
 	next := make(map[int32]float64, len(procs))
 	out := make([]Proc, 0, len(procs))
 	for _, p := range procs {
 		var pr Proc
 		pr.PID = p.Pid
-		if name, err := p.NameWithContext(ctx); err == nil {
-			pr.Name = name
-		}
-		if t, err := p.TimesWithContext(ctx); err == nil {
-			total := t.User + t.System
-			if prev, ok := c.lastCPU[p.Pid]; ok && elapsed > 0 {
-				pr.CPU = max(0, (total-prev)/elapsed*100)
-			}
-			next[p.Pid] = total
-		}
-		if mi, err := p.MemoryInfoWithContext(ctx); err == nil {
-			pr.RSS = mi.RSS
-			pr.Mem = memPercent(mi.RSS, memTotal)
-		}
-		if nt, err := p.NumThreadsWithContext(ctx); err == nil {
-			pr.Threads = nt
-		}
-		if s, ok := sys[p.Pid]; ok {
+		s, hasSys := sys[p.Pid]
+		if hasSys {
 			pr.State = s.State
 			pr.PPID = s.PPID
 			pr.Nice = s.Nice
@@ -317,6 +306,45 @@ func (c *Collector) collectProcs(ctx context.Context, elapsed float64, memTotal 
 			}
 			if n, err := p.NiceWithContext(ctx); err == nil {
 				pr.Nice = int8(n)
+			}
+		}
+
+		if u, has := usage[p.Pid]; has {
+			// libproc fast path for the unit-free metrics: name, RSS,
+			// threads (CPU time stays on gopsutil Times below — the
+			// rusage_info time fields are undocumented scheduler ticks)
+			pr.RSS = u.RSS
+			pr.Mem = memPercent(u.RSS, memTotal)
+			pr.Threads = u.Threads
+			if pr.Name == "" {
+				pr.Name = u.Name
+			}
+		}
+		if t, err := p.TimesWithContext(ctx); err == nil {
+			total := t.User + t.System
+			if prev, ok := c.lastCPU[p.Pid]; ok && elapsed > 0 {
+				pr.CPU = max(0, (total-prev)/elapsed*100)
+			}
+			next[p.Pid] = total
+		}
+		if usage == nil {
+			// gopsutil fallbacks for the fast-path metrics
+			if mi, err := p.MemoryInfoWithContext(ctx); err == nil {
+				pr.RSS = mi.RSS
+				pr.Mem = memPercent(mi.RSS, memTotal)
+			}
+			if nt, err := p.NumThreadsWithContext(ctx); err == nil {
+				pr.Threads = nt
+			}
+		}
+
+		// name priority: libproc proc_name > kinfo P_Comm > gopsutil
+		if pr.Name == "" && hasSys {
+			pr.Name = s.Name
+		}
+		if pr.Name == "" {
+			if name, err := p.NameWithContext(ctx); err == nil {
+				pr.Name = name
 			}
 		}
 		out = append(out, pr)
