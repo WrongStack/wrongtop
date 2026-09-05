@@ -13,7 +13,7 @@ func TestLoadDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Theme != "gruvbox-dark" {
+	if cfg.Theme != "tokyo-night" {
 		t.Fatalf("default theme: %q", cfg.Theme)
 	}
 	if cfg.Refresh.D() != time.Second {

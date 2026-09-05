@@ -282,9 +282,9 @@ func (m *Model) gridPanels(h int) []ui.Panel {
 	cpuInner := w - hostW - 2
 
 	panels := []ui.Panel{
-		{X: 0, Y: 0, W: hostW + 1, H: a, Title: "HOST", TitleStyle: title(pal.Blue),
+		{X: 0, Y: 0, W: hostW + 1, H: a, Title: "⌂ HOST", TitleStyle: title(pal.Blue),
 			Border: borders(pal.Blue), Lines: m.hostView(a - 2)},
-		{X: hostW, Y: 0, W: w - hostW, H: a, Title: "CPU", TitleStyle: title(pal.Green),
+		{X: hostW, Y: 0, W: w - hostW, H: a, Title: "⚡ CPU", TitleStyle: title(pal.Green),
 			Border: borders(pal.Green), Lines: m.cpuView(cpuInner, a-2)},
 	}
 	if m.density == densityMinimal {
@@ -292,11 +292,11 @@ func (m *Model) gridPanels(h int) []ui.Panel {
 	}
 
 	panels = append(panels,
-		ui.Panel{X: 0, Y: a - 1, W: hostW + 1, H: b, Title: "MEMORY", TitleStyle: title(pal.Purple),
+		ui.Panel{X: 0, Y: a - 1, W: hostW + 1, H: b, Title: "▦ MEMORY", TitleStyle: title(pal.Purple),
 			Border: borders(pal.Purple), Lines: m.memView(hostW - 2)},
-		ui.Panel{X: hostW, Y: a - 1, W: netW + 1, H: b, Title: "NETWORK", TitleStyle: title(pal.Cyan),
+		ui.Panel{X: hostW, Y: a - 1, W: netW + 1, H: b, Title: "⇅ NETWORK", TitleStyle: title(pal.Cyan),
 			Border: borders(pal.Cyan), Lines: m.netView(max(0, b-7))},
-		ui.Panel{X: hostW + netW, Y: a - 1, W: w - hostW - netW, H: b, Title: "DISKS", TitleStyle: title(pal.Orange),
+		ui.Panel{X: hostW + netW, Y: a - 1, W: w - hostW - netW, H: b, Title: "▤ DISKS", TitleStyle: title(pal.Orange),
 			Border: borders(pal.Orange), Lines: m.diskView(w-hostW-netW-2, max(1, b-3))},
 	)
 	if c == 0 {
@@ -306,12 +306,12 @@ func (m *Model) gridPanels(h int) []ui.Panel {
 	procY, procH := a+b-2, c
 	if gpus := len(m.snap.GPUs); gpus > 0 && c >= 8 {
 		gh := min(5, gpus+3) // head + up to two adapters + borders
-		panels = append(panels, ui.Panel{X: 0, Y: procY, W: w, H: gh, Title: "GPUS",
+		panels = append(panels, ui.Panel{X: 0, Y: procY, W: w, H: gh, Title: "◆ GPUS",
 			TitleStyle: title(pal.Red), Border: borders(pal.Red), Lines: m.gpuLines(w-2, gh-2)})
 		procY += gh - 1 // share the border row
 		procH -= gh - 1
 	}
-	panels = append(panels, ui.Panel{X: 0, Y: procY, W: w, H: procH, Title: "PROCESSES",
+	panels = append(panels, ui.Panel{X: 0, Y: procY, W: w, H: procH, Title: "☰ PROCESSES",
 		TitleStyle: title(pal.FG), Border: borders(pal.FG), Lines: m.procView(w-2, max(2, procH-3))})
 	return panels
 }

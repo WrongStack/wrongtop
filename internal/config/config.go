@@ -37,11 +37,12 @@ func (d Duration) D() time.Duration { return time.Duration(d) }
 type Config struct {
 	Theme      string     `yaml:"theme"`
 	Refresh    Duration   `yaml:"refresh"`
-	Layout     string     `yaml:"layout"` // full | compact | minimal
-	Modules    Modules    `yaml:"modules"`
+	Layout     string     `yaml:"layout"`  // full | compact | minimal
+	Modules    Modules    `yaml:"modules"` //nolint:gocritic // grouped YAML namespace
 	Thresholds Thresholds `yaml:"thresholds"`
 	Keys       Keys       `yaml:"keys"`
 	ReadOnly   bool       `yaml:"read_only,omitempty"` // no process signaling
+	NerdFonts  bool       `yaml:"nerd_fonts,omitempty"`
 }
 
 // Modules toggles optional feature tabs.
@@ -70,7 +71,7 @@ type Keys struct {
 // Default returns the built-in configuration.
 func Default() *Config {
 	return &Config{
-		Theme:   "gruvbox-dark",
+		Theme:   "tokyo-night",
 		Refresh: Duration(time.Second),
 		Modules: Modules{Docker: true, Processes: true},
 		Thresholds: Thresholds{
@@ -85,9 +86,10 @@ func Default() *Config {
 // Sample is an annotated example configuration, printed by
 // `wrongtop config-sample`.
 const Sample = `# ~/.config/wrongtop/config.yaml
-theme: gruvbox-dark      # 8 built-ins, or a file in ~/.config/wrongtop/themes
+theme: tokyo-night       # 8 built-ins, or a file in ~/.config/wrongtop/themes
 refresh: 1s              # min 250ms, max 10s
 layout: full             # full | compact | minimal (p cycles it live)
+nerd_fonts: false        # powerline separators in the status bar
 
 modules:
   docker: true           # show the DOCKER tab (daemon optional)

@@ -12,6 +12,8 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"gopkg.in/yaml.v3"
+
+	"github.com/ersinkoc/wrongtop/internal/ui/canvas"
 )
 
 // Palette is a named set of terminal colors.
@@ -293,6 +295,13 @@ func ByName(name string) *Theme {
 	return New(p)
 }
 
+// Soft blends a palette color toward the panel background — solid
+// primary colors read harsh in large fills, so chips, active tabs and
+// alert strips use this muted mix instead (modern soft-UI look).
+func (t *Theme) Soft(hex string) string {
+	return canvas.Ramp{t.Palette.BG, hex}.At(0.55)
+}
+
 // Theme pairs a palette with the derived lipgloss styles.
 type Theme struct {
 	Palette Palette
@@ -327,8 +336,8 @@ func New(p Palette) *Theme {
 			Background(c(p.BG)).
 			Foreground(c(p.FG)),
 		TabActive: lipgloss.NewStyle().
-			Background(c(p.Purple)).
-			Foreground(c(p.BG)).
+			Background(c(canvas.Ramp{p.BG, p.Purple}.At(0.55))).
+			Foreground(c(p.FG)).
 			Bold(true).
 			Padding(0, 1),
 		TabInactive: lipgloss.NewStyle().

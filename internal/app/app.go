@@ -493,13 +493,13 @@ func (m *Model) tabBarView() string {
 // left, live chips center, key hints right.
 func (m *Model) statusBarView() string {
 	pal := m.theme.Palette
-	logo := lipgloss.NewStyle().Background(lipgloss.Color(pal.Purple)).
-		Foreground(lipgloss.Color(pal.BG)).Bold(true).
+	logo := lipgloss.NewStyle().Background(lipgloss.Color(m.theme.Soft(pal.Purple))).
+		Foreground(lipgloss.Color(pal.FG)).Bold(true).
 		Padding(0, 1).Render("WRONGTOP")
 	left := logo + " " + m.theme.Styles.Muted.Render("v"+m.version)
 	if m.stream != nil {
-		left += " " + lipgloss.NewStyle().Background(lipgloss.Color(pal.Orange)).
-			Foreground(lipgloss.Color(pal.BG)).Bold(true).
+		left += " " + lipgloss.NewStyle().Background(lipgloss.Color(m.theme.Soft(pal.Orange))).
+			Foreground(lipgloss.Color(pal.FG)).Bold(true).
 			Padding(0, 1).Render("REMOTE "+m.remoteAddr)
 	}
 
@@ -518,8 +518,8 @@ func (m *Model) statusBarView() string {
 
 	mid := ""
 	if time.Now().Before(m.flashUntil) && m.flash != "" {
-		mid = lipgloss.NewStyle().Background(lipgloss.Color(pal.Yellow)).
-			Foreground(lipgloss.Color(pal.BG)).Bold(true).
+		mid = lipgloss.NewStyle().Background(lipgloss.Color(m.theme.Soft(pal.Yellow))).
+			Foreground(lipgloss.Color(pal.FG)).Bold(true).
 			Padding(0, 1).Render(m.flash)
 	} else if !m.latest.Time.IsZero() {
 		mid = m.liveSummary()
@@ -534,10 +534,11 @@ func (m *Model) statusBarView() string {
 		strings.Repeat(" ", half) + mid + strings.Repeat(" ", gap-half) + right)
 }
 
-// chip renders a status-bar segment with a solid background, btop-style.
+// chip renders a status-bar segment with a softened background, modern
+// soft-UI style: solid primaries read harsh in large fills.
 func (m *Model) chip(bg, text string) string {
-	return lipgloss.NewStyle().Background(lipgloss.Color(bg)).
-		Foreground(lipgloss.Color(m.theme.Palette.BG)).Padding(0, 1).Render(text)
+	return lipgloss.NewStyle().Background(lipgloss.Color(m.theme.Soft(bg))).
+		Foreground(lipgloss.Color(m.theme.Palette.FG)).Padding(0, 1).Render(text)
 }
 
 // liveSummary renders the center chips: cpu, memory, network rates and,
@@ -558,9 +559,13 @@ func (m *Model) liveSummary() string {
 	}
 	var b strings.Builder
 	spark := canvas.Sparkline(m.cpuHist, canvas.Ramp{pal.BG}) // uncolored inside the chip
+	sep := " "
+	if m.cfg.NerdFonts {
+		sep = m.theme.Styles.Muted.Render("")
+	}
 	b.WriteString(m.chip(bgFor(t.CPUWarn, t.CPUCrit, m.latest.CPU.Percent),
 		"cpu "+spark+fmt.Sprintf(" %.0f%%", m.latest.CPU.Percent)))
-	b.WriteString(" ")
+	b.WriteString(sep)
 	b.WriteString(m.chip(bgFor(t.MemWarn, t.MemCrit, m.latest.Mem.Percent),
 		fmt.Sprintf("mem %.0f%%", m.latest.Mem.Percent)))
 
@@ -569,12 +574,12 @@ func (m *Model) liveSummary() string {
 		rx += n.RxRate
 		tx += n.TxRate
 	}
-	b.WriteString(" ")
+	b.WriteString(sep)
 	b.WriteString(m.chip(pal.Blue, fmt.Sprintf("↓%s ↑%s", format.Rate(rx), format.Rate(tx))))
 
 	if len(m.latest.Sensors) > 0 {
 		s := m.latest.Sensors[0]
-		b.WriteString(" ")
+		b.WriteString(sep)
 		b.WriteString(m.chip(bgFor(t.TempWarn, t.TempCrit, s.TempC),
 			fmt.Sprintf("%.0f°C", s.TempC)))
 	}
@@ -587,7 +592,7 @@ func (m *Model) liveSummary() string {
 		if !bat.Charging && bat.Percent <= 30 {
 			bg = pal.Red
 		}
-		b.WriteString(" ")
+		b.WriteString(sep)
 		b.WriteString(m.chip(bg, fmt.Sprintf("%s%.0f%%", icon, bat.Percent)))
 	}
 	return b.String()

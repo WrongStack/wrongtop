@@ -438,8 +438,8 @@ func (m *Model) alertsView() string {
 		if a.Crit {
 			bg = pal.Red
 		}
-		chips[i] = lipgloss.NewStyle().Background(lipgloss.Color(bg)).
-			Foreground(lipgloss.Color(pal.BG)).Bold(true).
+		chips[i] = lipgloss.NewStyle().Background(lipgloss.Color(m.th.Soft(bg))).
+			Foreground(lipgloss.Color(pal.FG)).Bold(true).
 			Padding(0, 1).Render("⚠ " + a.Text)
 	}
 	return strings.Join(chips, " ")

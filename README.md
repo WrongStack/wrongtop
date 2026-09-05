@@ -15,7 +15,8 @@
 - **Docker** — container list with live CPU, memory, network and block I/O fetched concurrently; start / stop / restart; follow-mode log viewer with scrollback. The daemon is optional: the tab shows a notice and retries until it appears
 - **Disks** — filesystem usage bars plus per-device read/write rates, IOPS and busy time
 - **Network** — per-interface throughput and totals, sorted by current activity
-- **Themes** — eight built-in palettes plus **user-defined theme files** loaded from `~/.config/wrongtop/themes/*.yml`; `T` cycles themes live without losing state
+- **Themes** — eight built-in palettes (`tokyo-night` is the default) plus **user-defined theme files** loaded from `~/.config/wrongtop/themes/*.yml`; `T` cycles themes live without losing state
+- **Soft modern UI** — chips, active tabs and alert strips blend their background toward the palette, panel titles carry icons, and `nerd_fonts: true` upgrades the status bar to powerline separators
 - **Live config** — `R` hot-reloads the YAML (theme, refresh, thresholds, layout, key bindings); `p` cycles dashboard density presets
 - **Remote monitoring** — `wrongtop serve` streams snapshots to `wrongtop connect` clients over a token-authenticated, read-only protocol; `wrongtop dump` prints JSON lines for scripts
 - **Zero-config** — runs fine without a config file; YAML overrides are optional
@@ -129,9 +130,10 @@ Disks tab:
 WrongTop works with no configuration. To customize, run `wrongtop config-sample` and start from the annotated output.
 
 ```yaml
-theme: gruvbox-dark       # 8 built-ins, or a file in ~/.config/wrongtop/themes
+theme: tokyo-night       # 8 built-ins, or a file in ~/.config/wrongtop/themes
 refresh: 1s               # sample interval, clamped to 250ms–10s
 layout: full              # full | compact | minimal (p cycles it live)
+nerd_fonts: false         # true: powerline separators in the status bar
 
 modules:                  # optional tabs
   processes: true         # show the process table
