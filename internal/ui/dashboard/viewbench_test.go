@@ -3,9 +3,9 @@ package dashboard
 import (
 	"testing"
 
-	"github.com/ersinkoc/wrongtop/internal/collector"
-	"github.com/ersinkoc/wrongtop/internal/config"
-	"github.com/ersinkoc/wrongtop/internal/theme"
+	"github.com/wrongstack/wrongtop/internal/collector"
+	"github.com/wrongstack/wrongtop/internal/config"
+	"github.com/wrongstack/wrongtop/internal/theme"
 )
 
 func benchModel(b *testing.B, w, h int) *Model {

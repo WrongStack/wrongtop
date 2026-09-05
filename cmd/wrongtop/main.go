@@ -11,10 +11,10 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/ersinkoc/wrongtop/internal/app"
-	"github.com/ersinkoc/wrongtop/internal/collector"
-	"github.com/ersinkoc/wrongtop/internal/config"
-	"github.com/ersinkoc/wrongtop/internal/remote"
+	"github.com/wrongstack/wrongtop/internal/app"
+	"github.com/wrongstack/wrongtop/internal/collector"
+	"github.com/wrongstack/wrongtop/internal/config"
+	"github.com/wrongstack/wrongtop/internal/remote"
 	"github.com/spf13/cobra"
 )
 

@@ -5,7 +5,7 @@ package ui
 import (
 	"charm.land/bubbletea/v2"
 
-	"github.com/ersinkoc/wrongtop/internal/theme"
+	"github.com/wrongstack/wrongtop/internal/theme"
 )
 
 // Tab is a single page of the wrongtop UI. The root model forwards

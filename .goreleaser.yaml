@@ -18,7 +18,7 @@ builds:
       - arm64
     ldflags:
       - -s -w
-      - -X github.com/ersinkoc/wrongtop/cmd/wrongtop.version={{.Version}}
+      - -X github.com/wrongstack/wrongtop/cmd/wrongtop.version={{.Version}}
   - id: default
     env:
       - CGO_ENABLED=0
@@ -30,7 +30,7 @@ builds:
       - arm64
     ldflags:
       - -s -w
-      - -X github.com/ersinkoc/wrongtop/cmd/wrongtop.version={{.Version}}
+      - -X github.com/wrongstack/wrongtop/cmd/wrongtop.version={{.Version}}
 
 archives:
   - formats: ["{{ if eq .Os \"windows\" }}zip{{ else }}tar.gz{{ end }}"]
@@ -59,6 +59,6 @@ brews:
   - repository:
       owner: ersinkoc
       name: homebrew-tap
-    homepage: "https://github.com/ersinkoc/wrongtop"
+    homepage: "https://github.com/wrongstack/wrongtop"
     description: "Cross-platform terminal system monitor: CPU, memory, processes, disks, network, Docker, sensors and GPUs."
     license: MIT

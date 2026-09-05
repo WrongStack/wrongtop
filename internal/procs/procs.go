@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ersinkoc/wrongtop/internal/collector"
+	"github.com/wrongstack/wrongtop/internal/collector"
 	"github.com/shirou/gopsutil/v4/process"
 )
 

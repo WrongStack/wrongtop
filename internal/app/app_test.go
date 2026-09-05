@@ -7,9 +7,9 @@ import (
 
 	"charm.land/bubbletea/v2"
 
-	"github.com/ersinkoc/wrongtop/internal/collector"
-	"github.com/ersinkoc/wrongtop/internal/config"
-	"github.com/ersinkoc/wrongtop/internal/dockerclient"
+	"github.com/wrongstack/wrongtop/internal/collector"
+	"github.com/wrongstack/wrongtop/internal/config"
+	"github.com/wrongstack/wrongtop/internal/dockerclient"
 )
 
 func TestNewTabsRespectModules(t *testing.T) {

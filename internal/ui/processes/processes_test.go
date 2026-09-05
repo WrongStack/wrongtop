@@ -6,9 +6,9 @@ import (
 
 	"charm.land/bubbletea/v2"
 
-	"github.com/ersinkoc/wrongtop/internal/collector"
-	"github.com/ersinkoc/wrongtop/internal/config"
-	"github.com/ersinkoc/wrongtop/internal/theme"
+	"github.com/wrongstack/wrongtop/internal/collector"
+	"github.com/wrongstack/wrongtop/internal/config"
+	"github.com/wrongstack/wrongtop/internal/theme"
 )
 
 // keyPress builds a printable KeyPressMsg for tests.

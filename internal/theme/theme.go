@@ -13,7 +13,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"gopkg.in/yaml.v3"
 
-	"github.com/ersinkoc/wrongtop/internal/ui/canvas"
+	"github.com/wrongstack/wrongtop/internal/ui/canvas"
 )
 
 // Palette is a named set of terminal colors.

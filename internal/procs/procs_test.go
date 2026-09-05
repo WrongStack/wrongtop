@@ -3,7 +3,7 @@ package procs
 import (
 	"testing"
 
-	"github.com/ersinkoc/wrongtop/internal/collector"
+	"github.com/wrongstack/wrongtop/internal/collector"
 )
 
 func sample() []collector.Proc {

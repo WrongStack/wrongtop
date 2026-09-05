@@ -3,8 +3,8 @@ package docker
 import (
 	"testing"
 
-	"github.com/ersinkoc/wrongtop/internal/config"
-	"github.com/ersinkoc/wrongtop/internal/theme"
+	"github.com/wrongstack/wrongtop/internal/config"
+	"github.com/wrongstack/wrongtop/internal/theme"
 )
 
 func newTestModel() *Model {

@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ersinkoc/wrongtop/internal/collector"
+	"github.com/wrongstack/wrongtop/internal/collector"
 )
 
 // Options configures Serve.

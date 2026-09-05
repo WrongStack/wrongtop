@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ersinkoc/wrongtop/internal/collector"
+	"github.com/wrongstack/wrongtop/internal/collector"
 )
 
 func TestFrameRoundTrip(t *testing.T) {

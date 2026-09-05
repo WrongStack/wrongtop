@@ -6,7 +6,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 
-	"github.com/ersinkoc/wrongtop/internal/ui"
+	"github.com/wrongstack/wrongtop/internal/ui"
 )
 
 // helpSection is one titled group of "key  description" lines in the

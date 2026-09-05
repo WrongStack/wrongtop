@@ -14,7 +14,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/ersinkoc/wrongtop/internal/collector"
+	"github.com/wrongstack/wrongtop/internal/collector"
 )
 
 // DefaultPort is used by serve and connect when none is specified.

@@ -11,12 +11,12 @@ import (
 	"charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"github.com/ersinkoc/wrongtop/internal/collector"
-	"github.com/ersinkoc/wrongtop/internal/config"
-	"github.com/ersinkoc/wrongtop/internal/format"
-	"github.com/ersinkoc/wrongtop/internal/theme"
-	"github.com/ersinkoc/wrongtop/internal/ui"
-	"github.com/ersinkoc/wrongtop/internal/ui/canvas"
+	"github.com/wrongstack/wrongtop/internal/collector"
+	"github.com/wrongstack/wrongtop/internal/config"
+	"github.com/wrongstack/wrongtop/internal/format"
+	"github.com/wrongstack/wrongtop/internal/theme"
+	"github.com/wrongstack/wrongtop/internal/ui"
+	"github.com/wrongstack/wrongtop/internal/ui/canvas"
 )
 
 // Model is the network tab.

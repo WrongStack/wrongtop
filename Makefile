@@ -1,6 +1,6 @@
 BINARY := wrongtop
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-LDFLAGS := -s -w -X github.com/ersinkoc/wrongtop/cmd/wrongtop.version=$(VERSION)
+LDFLAGS := -s -w -X github.com/wrongstack/wrongtop/cmd/wrongtop.version=$(VERSION)
 GO ?= go
 
 .PHONY: build run test vet lint cross clean

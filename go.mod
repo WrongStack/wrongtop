@@ -1,4 +1,4 @@
-module github.com/ersinkoc/wrongtop
+module github.com/wrongstack/wrongtop
 
 go 1.26.2
 

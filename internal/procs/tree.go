@@ -5,7 +5,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/ersinkoc/wrongtop/internal/collector"
+	"github.com/wrongstack/wrongtop/internal/collector"
 )
 
 // TreeNode is one row of the flattened process forest: a process with

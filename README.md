@@ -27,13 +27,13 @@
 Requires Go 1.26+.
 
 ```sh
-go install github.com/ersinkoc/wrongtop/cmd/wrongtop@latest
+go install github.com/wrongstack/wrongtop/cmd/wrongtop@latest
 ```
 
 Or build from source:
 
 ```sh
-git clone https://github.com/ersinkoc/wrongtop
+git clone https://github.com/wrongstack/wrongtop
 cd wrongtop
 make build   # or: go build -o wrongtop ./cmd/wrongtop
 ```
@@ -210,7 +210,7 @@ make cross   # all platform targets into dist/
 Embed a version string at build time:
 
 ```sh
-go build -ldflags "-X github.com/ersinkoc/wrongtop/cmd/wrongtop.version=$(git describe --tags --always)" -o wrongtop ./cmd/wrongtop
+go build -ldflags "-X github.com/wrongstack/wrongtop/cmd/wrongtop.version=$(git describe --tags --always)" -o wrongtop ./cmd/wrongtop
 ```
 
 ## Roadmap
