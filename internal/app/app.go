@@ -831,5 +831,9 @@ func (m *Model) liveChips() []string {
 // shortRateFixed renders a rate without the "/s" suffix, padded to a
 // stable width so chip pairs stay put between refreshes.
 func shortRateFixed(bps float64) string {
-	return strings.TrimSuffix(format.RateFixed(9, bps), "/s")
+	s := strings.TrimSuffix(format.Rate(bps), "/s")
+	for len(s) < 9 { // rates are pure ASCII: len == display width
+		s += " "
+	}
+	return s
 }
