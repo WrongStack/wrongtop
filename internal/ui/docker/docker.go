@@ -303,6 +303,7 @@ func (m *Model) updateRates(cons []dockerclient.Container) {
 	}
 	dt := now.Sub(m.prevTime).Seconds()
 	next := make(map[string][4]float64, len(cons))
+	prev := make(map[string]dockerclient.Container, len(cons))
 	for _, c := range cons {
 		var r [4]float64
 		if p, ok := m.prev[c.ID]; ok && dt > 0 {
@@ -320,9 +321,9 @@ func (m *Model) updateRates(cons []dockerclient.Container) {
 			}
 		}
 		next[c.ID] = r
-		m.prev[c.ID] = c
+		prev[c.ID] = c
 	}
-	m.rates, m.prevTime = next, now
+	m.rates, m.prev, m.prevTime = next, prev, now
 }
 
 func (m *Model) rebuild() {
