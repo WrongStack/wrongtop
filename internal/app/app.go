@@ -314,6 +314,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.helpMode && !m.alertsMode {
 			return m, m.tabs[m.active].Update(msg)
 		}
+		return m, nil // overlays swallow content clicks, like keys
 
 	case tea.KeyPressMsg:
 		if cmd, handled := m.globalKey(msg); handled {

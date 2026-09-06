@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -237,5 +238,62 @@ func TestDockerLifecycleGatedByModule(t *testing.T) {
 	mOn.docker = &dockerclient.Client{}
 	if _, cmd := mOn.Update(tickMsg{}); len(flattenCmd(t, cmd)) != 3 {
 		t.Error("tick with docker module and client must schedule dockerListCmd")
+	}
+}
+
+// TestOverlaysSwallowContentClicks pins the modal contract: while the
+// help or alerts overlay is open, content-area clicks must not reach
+// the hidden tab underneath — the KeyPressMsg case already swallows
+// keys there. Regression: the MouseClickMsg case guarded forwarding
+// with !helpMode && !alertsMode but fell through to the tab dispatch
+// when the guard failed, so a click mutated the hidden table's
+// selection invisibly.
+func TestOverlaysSwallowContentClicks(t *testing.T) {
+	snap := collector.Snapshot{Time: time.Now()}
+	for i := 1; i <= 6; i++ {
+		snap.Procs = append(snap.Procs, collector.Proc{
+			PID: int32(100 + i), Name: fmt.Sprintf("proc%02d", i), User: "u", State: "S",
+		})
+	}
+	m := New(config.Default(), "", "test")
+	m.Update(tea.WindowSizeMsg{Width: 110, Height: 30})
+	m.Update(collector.SnapshotMsg{Snap: snap})
+	m.Update(key("2")) // PROCESSES tab
+
+	content := func() string {
+		lines := strings.Split(m.frame(), "\n")
+		if len(lines) < 3 {
+			t.Fatalf("frame has %d lines, want tab bar + content + status", len(lines))
+		}
+		// drop the tab-bar row (clock, alert pulse) and the status bar:
+		// only stable tab content takes part in the comparison
+		return strings.Join(lines[1:len(lines)-1], "\n")
+	}
+
+	r0 := content()
+	m.Update(tea.MouseClickMsg{X: 10, Y: 5, Button: tea.MouseLeft})
+	r1 := content()
+	if r1 == r0 {
+		t.Fatal("control click did not move the processes selection; click path ineffective")
+	}
+
+	for _, o := range []struct{ name, toggle string }{
+		{"alerts", "a"},
+		{"help", "?"},
+	} {
+		m.Update(key(o.toggle))
+		m.Update(tea.MouseClickMsg{X: 10, Y: 7, Button: tea.MouseLeft})
+		m.Update(key(o.toggle))
+		if got := content(); got != r1 {
+			t.Errorf("%s overlay: content click leaked through and moved the hidden selection", o.name)
+		}
+	}
+
+	// the tab-bar row stays clickable under an overlay (keys 1-9 also
+	// keep working there), so switching tabs must not regress
+	m.Update(key("a")) // alerts overlay open
+	m.Update(tea.MouseClickMsg{X: m.tabBounds[0][0], Y: 0, Button: tea.MouseLeft})
+	if m.active != 0 {
+		t.Errorf("tab-bar click under overlay did not switch tabs (active = %d)", m.active)
 	}
 }
