@@ -23,4 +23,9 @@ type Tab interface {
 	View() string
 	// SetTheme swaps the color theme without losing tab state.
 	SetTheme(th *theme.Theme)
+	// SetVisible marks the tab as the active one. Snapshots still reach
+	// hidden tabs (history buffers stay warm), but heavy per-snapshot
+	// work — table rebuilds above all — may be skipped while hidden,
+	// provided SetVisible(true) catches up from the latest data.
+	SetVisible(visible bool)
 }

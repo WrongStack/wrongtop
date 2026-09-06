@@ -34,6 +34,17 @@ func Rate(bps float64) string {
 	return fmt.Sprintf("%.1f %cb/s", bps/div, "KMGTPE"[exp])
 }
 
+// RateFixed renders a rate right-padded to a fixed cell width, so live
+// chip and head figures don't jitter sideways as their magnitude crosses
+// unit boundaries ("986 B/s" ↔ "12.4 MB/s").
+func RateFixed(w int, bps float64) string {
+	s := Rate(bps)
+	for len(s) < w { // rates are pure ASCII: len == display width
+		s += " "
+	}
+	return s
+}
+
 // BytesCompact renders a byte count in binary units like Bytes, but
 // drops the decimal once the value reaches 100 of its unit, so wide
 // counts stay inside narrow table columns ("9.9 GiB", "128 GiB").

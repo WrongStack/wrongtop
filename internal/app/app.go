@@ -20,11 +20,13 @@ import (
 	"github.com/wrongstack/wrongtop/internal/theme"
 	"github.com/wrongstack/wrongtop/internal/ui"
 	"github.com/wrongstack/wrongtop/internal/ui/canvas"
+	"github.com/wrongstack/wrongtop/internal/ui/conns"
 	"github.com/wrongstack/wrongtop/internal/ui/dashboard"
 	"github.com/wrongstack/wrongtop/internal/ui/disks"
 	"github.com/wrongstack/wrongtop/internal/ui/docker"
 	"github.com/wrongstack/wrongtop/internal/ui/network"
 	"github.com/wrongstack/wrongtop/internal/ui/processes"
+	"github.com/wrongstack/wrongtop/internal/ui/sensors"
 )
 
 // alertEvent is one threshold crossing in the session alert history.
@@ -68,8 +70,16 @@ type Model struct {
 	alerts     []*alertEvent
 	openAlerts map[string]*alertEvent
 
+	pulse bool // flips per snapshot: drives the critical chip pulse
+
 	// cpu history for the status-bar sparkline (percent / 100 samples)
 	cpuHist []float64
+
+	// the composed screen is cached: only messages that can change it
+	// mark it dirty. Mouse-motion floods (drag across the window fires
+	// hundreds per second) reuse the string, and bubbletea's renderer
+	// then skips the diff entirely because the frame is byte-identical.
+	frameCache string
 
 	flash      string // transient status-bar note
 	flashUntil time.Time
@@ -117,7 +127,8 @@ type remoteEndedMsg struct{ err error }
 func New(cfg *config.Config, cfgPath, version string) *Model {
 	th := theme.ByName(cfg.Theme)
 	// dashboard, disks and network are always present; cfg.Modules gates
-	// the optional tabs.
+	// the optional tabs (new tabs append at the end so key bindings stay
+	// stable across upgrades).
 	tabs := []ui.Tab{dashboard.New(cfg, th)}
 	if cfg.Modules.Processes {
 		tabs = append(tabs, processes.New(cfg, th))
@@ -126,6 +137,12 @@ func New(cfg *config.Config, cfgPath, version string) *Model {
 		tabs = append(tabs, docker.New(cfg, th))
 	}
 	tabs = append(tabs, disks.New(cfg, th), network.New(cfg, th))
+	if cfg.Modules.Sensors {
+		tabs = append(tabs, sensors.New(cfg, th))
+	}
+	if cfg.Modules.Connections {
+		tabs = append(tabs, conns.New(cfg, th))
+	}
 
 	return &Model{
 		cfg:        cfg,
@@ -136,6 +153,19 @@ func New(cfg *config.Config, cfgPath, version string) *Model {
 		tabs:       tabs,
 		openAlerts: make(map[string]*alertEvent),
 	}
+}
+
+// setActive switches the active tab and updates visibility flags so
+// hidden tabs can skip their per-snapshot rebuilds. Tab constructors
+// default to visible; the dashboard (index 0) is the only one that
+// starts active.
+func (m *Model) setActive(i int) {
+	if i < 0 || i >= len(m.tabs) || i == m.active {
+		return
+	}
+	m.tabs[m.active].SetVisible(false)
+	m.active = i
+	m.tabs[i].SetVisible(true)
 }
 
 // Run starts the wrongtop TUI.
@@ -193,6 +223,10 @@ func (m *Model) dockerListCmd() tea.Cmd {
 
 // Update implements tea.Model.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if _, motion := msg.(tea.MouseMotionMsg); motion {
+		return m, nil // drag noise: nothing reads hover position
+	}
+	m.frameCache = "" // every other message may change the frame
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -224,6 +258,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case collector.SnapshotMsg:
 		m.latest = msg.Snap
+		m.pulse = !m.pulse // the crit chip breathes at the refresh cadence
 		m.trackAlerts(msg.Snap)
 		pct := min(max(m.latest.CPU.Percent/100, 0), 1)
 		m.cpuHist = append(m.cpuHist, pct)
@@ -261,7 +296,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if mouse.Y == 0 { // tab bar row
 			if mouse.Button == tea.MouseLeft {
 				if n, ok := m.tabAt(mouse.X); ok {
-					m.active = n
+					m.setActive(n)
 				} else if m.alertZoneStart >= 0 && mouse.X >= m.alertZoneStart {
 					m.alertsMode = !m.alertsMode // alert chips + clock zone
 				}
@@ -307,14 +342,14 @@ func (m *Model) globalKey(key tea.KeyPressMsg) (tea.Cmd, bool) {
 			return nil, true
 		}
 	case "tab":
-		m.active = (m.active + 1) % len(m.tabs)
+		m.setActive((m.active + 1) % len(m.tabs))
 		return nil, true
 	case "shift+tab":
-		m.active = (m.active - 1 + len(m.tabs)) % len(m.tabs)
+		m.setActive((m.active - 1 + len(m.tabs)) % len(m.tabs))
 		return nil, true
-	case "1", "2", "3", "4", "5":
+	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
 		if n := int(key.String()[0] - '1'); n < len(m.tabs) {
-			m.active = n
+			m.setActive(n)
 		}
 		return nil, true
 	case "T":
@@ -404,6 +439,32 @@ func (m *Model) trackAlerts(snap collector.Snapshot) {
 
 // View implements tea.Model.
 func (m *Model) View() tea.View {
+	if m.frameCache == "" {
+		m.frameCache = m.frame()
+	}
+	v := tea.NewView(m.frameCache)
+	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
+	v.WindowTitle = m.windowTitle()
+	return v
+}
+
+// windowTitle carries the at-a-glance figures into the terminal window —
+// visible even when wrongtop is in a background tab.
+func (m *Model) windowTitle() string {
+	if m.latest.Time.IsZero() {
+		return "wrongtop"
+	}
+	return fmt.Sprintf("wrongtop · cpu %.0f%% · mem %.0f%%",
+		m.latest.CPU.Percent, m.latest.Mem.Percent)
+}
+
+// frame composes the full screen: tab bar, content area, status bar.
+// The content area is padded (or its trailing blanks trimmed) so it is
+// exactly height-2 rows — a short tab (empty docker, sparse sensors,
+// waiting for the first snapshot) can never pull the status bar off the
+// bottom row. It is docked, always.
+func (m *Model) frame() string {
 	content := m.tabs[m.active].View()
 	if m.helpMode {
 		content = m.helpOverlay(content)
@@ -411,15 +472,41 @@ func (m *Model) View() tea.View {
 	if m.alertsMode {
 		content = m.alertsOverlay(content)
 	}
-	v := tea.NewView(strings.Join([]string{
+
+	lines := strings.Split(content, "\n")
+	for len(lines) > 0 && strings.TrimSpace(stripANSI(lines[len(lines)-1])) == "" {
+		lines = lines[:len(lines)-1] // trailing blanks carry no information
+	}
+	for len(lines) < m.height-2 {
+		lines = append(lines, "")
+	}
+
+	return strings.Join([]string{
 		m.tabBarView(),
-		content,
+		strings.Join(lines, "\n"),
 		m.statusBarView(),
-	}, "\n"))
-	v.AltScreen = true
-	v.MouseMode = tea.MouseModeCellMotion
-	v.WindowTitle = "wrongtop"
-	return v
+	}, "\n")
+}
+
+// stripANSI removes SGR (and other escape) sequences, leaving printable
+// text — used to tell styled-blank lines from real content.
+func stripANSI(s string) string {
+	var b strings.Builder
+	inEsc := false
+	for _, r := range s {
+		if inEsc {
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+				inEsc = false
+			}
+			continue
+		}
+		if r == '\x1b' {
+			inEsc = true
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 // helpOverlay centers the help box over the tab content.
@@ -466,7 +553,9 @@ func (m *Model) alertsOverlayView() string {
 	}
 	footer := st.HelpKey.Render("esc") + st.HelpText.Render(" close")
 	return ui.Box(ui.BorderFor(m.cfg.Border), st.Border, st.BorderChar, st.BorderTitle,
-		"ALERTS", strings.TrimRight(b.String(), "\n")+"\n\n  "+footer)
+		ui.Icon("warn", m.cfg.NerdFonts)+" ALERTS",
+		st.Muted.Render(fmt.Sprintf("%d events ", len(m.alerts))),
+		strings.TrimRight(b.String(), "\n")+"\n\n  "+footer)
 }
 
 // tabAt resolves a click on the tab bar row to a tab index. Bounds are
@@ -484,7 +573,40 @@ func (m *Model) tabAt(x int) (int, bool) {
 // tabBarView renders the tab strip: tabs left; active alert chips and a
 // clock right. The alert zone is app chrome — glances-style warnings
 // that stay visible on every tab and never reflow the dashboard grid.
+// Under width pressure tabs collapse to their icons first, then the
+// chips degrade to a bare count, then yield the row entirely.
 func (m *Model) tabBarView() string {
+	left := m.tabBarLeft(false)
+	right := m.tabBarRight()
+	if lipgloss.Width(left)+lipgloss.Width(right) > m.width {
+		if compact := m.tabBarLeft(true); lipgloss.Width(compact)+lipgloss.Width(right) <= m.width {
+			left = compact // inactive tabs shrink to their icons
+		} else {
+			m.tabBarLeft(false) // compact not adopted: restore full-width bounds
+		}
+	}
+
+	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
+	if gap < 1 { // a bare alert count, then nothing
+		if n := len(m.openAlerts); n > 0 {
+			right = m.chip(m.theme.Palette.Red, ui.Icon("warn", m.cfg.NerdFonts)+fmt.Sprintf(" %d", n))
+			gap = m.width - lipgloss.Width(left) - lipgloss.Width(right)
+		}
+	}
+	m.alertZoneStart = -1
+	if gap < 1 {
+		right = "" // the tabs win; alerts stay on `a` and the status bar
+		gap = max(0, m.width-lipgloss.Width(left))
+	} else {
+		m.alertZoneStart = m.width - lipgloss.Width(right)
+	}
+	return left + strings.Repeat(" ", gap) + right
+}
+
+// tabBarLeft renders the tab strip and records the clickable bounds.
+// With compact set, inactive tabs drop their labels and keep only the
+// icon — the first degradation step before the row gives up.
+func (m *Model) tabBarLeft(compact bool) string {
 	st := m.theme.Styles
 	pal := m.theme.Palette
 	parts := make([]string, len(m.tabs))
@@ -492,6 +614,11 @@ func (m *Model) tabBarView() string {
 	x := 0
 	for i, t := range m.tabs {
 		label := t.Title()
+		if compact && i != m.active { // the active tab always keeps its label
+			if icon, _, found := strings.Cut(label, " "); found {
+				label = icon
+			}
+		}
 		var part string
 		if i == m.active {
 			part = st.TabActive.Render(label)
@@ -509,28 +636,13 @@ func (m *Model) tabBarView() string {
 		x += w
 		parts[i] = part
 	}
-	left := st.TabBar.Render(strings.Join(parts, ""))
-
-	right := m.tabBarRight()
-	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
-	if gap < 1 { // under width pressure: a bare alert count, then nothing
-		if n := len(m.openAlerts); n > 0 {
-			right = m.chip(pal.Red, fmt.Sprintf("⚠ %d", n))
-			gap = m.width - lipgloss.Width(left) - lipgloss.Width(right)
-		}
-	}
-	m.alertZoneStart = -1
-	if gap < 1 {
-		right = "" // the tabs win; alerts stay on `a` and the status bar
-		gap = max(0, m.width-lipgloss.Width(left))
-	} else {
-		m.alertZoneStart = m.width - lipgloss.Width(right)
-	}
-	return left + strings.Repeat(" ", gap) + right
+	return st.TabBar.Render(strings.Join(parts, ""))
 }
 
 // tabBarRight renders the alert/clock zone: active alerts (critical
-// first, at most three chips) followed by the clock.
+// first, at most three chips) followed by the clock. Critical chips
+// pulse by blending two soft fills on alternate snapshots, and long
+// events carry their duration so a stuck condition reads at a glance.
 func (m *Model) tabBarRight() string {
 	pal := m.theme.Palette
 	events := make([]*alertEvent, 0, len(m.openAlerts))
@@ -545,14 +657,21 @@ func (m *Model) tabBarRight() string {
 	})
 	var chips []string
 	for _, ev := range events[:min(3, len(events))] {
-		bg := pal.Yellow
+		bg, blend := pal.Yellow, 0.55
 		if ev.Crit {
 			bg = pal.Red
+			if m.pulse {
+				blend = 0.80 // brighter on alternate ticks: alive, not painted over
+			}
 		}
-		chips = append(chips, m.chip(bg, "⚠ "+ev.Text))
+		text := ui.Icon("warn", m.cfg.NerdFonts) + " " + ev.Text
+		if d := time.Since(ev.Start); d > time.Minute {
+			text += " · " + format.Uptime(d)
+		}
+		chips = append(chips, m.chipT(bg, text, blend))
 	}
 	if n := len(events) - 3; n > 0 {
-		chips = append(chips, m.chip(pal.Red, fmt.Sprintf("⚠ +%d", n)))
+		chips = append(chips, m.chip(pal.Red, ui.Icon("warn", m.cfg.NerdFonts)+fmt.Sprintf(" +%d", n)))
 	}
 	chips = append(chips, m.theme.Styles.Muted.Render(time.Now().Format("15:04")))
 	return strings.Join(chips, " ")
@@ -629,16 +748,29 @@ func (m *Model) chipSep() string {
 // chip renders a status-bar segment with a softened background, modern
 // soft-UI style: solid primaries read harsh in large fills.
 func (m *Model) chip(bg, text string) string {
-	return lipgloss.NewStyle().Background(lipgloss.Color(m.theme.Soft(bg))).
+	return m.chipT(bg, text, 0.55)
+}
+
+// chipT renders a chip whose fill blends toward the background at t —
+// higher t reads louder. The crit pulse lives on that dial.
+func (m *Model) chipT(bg, text string, t float64) string {
+	return lipgloss.NewStyle().Background(lipgloss.Color(canvas.Ramp{m.theme.Palette.BG, bg}.At(t))).
 		Foreground(lipgloss.Color(m.theme.Palette.FG)).Padding(0, 1).Render(text)
 }
 
 // liveChips renders the center chips in drop-priority order: cpu,
-// memory, network rates, temperature, battery.
+// memory, network rates, temperature, battery. Figures use fixed-width
+// rate formatting so the bar doesn't jitter as magnitudes cross units.
 func (m *Model) liveChips() []string {
 	pal := m.theme.Palette
 	t := m.cfg.Thresholds
-	short := func(bps float64) string { return strings.TrimSuffix(format.Rate(bps), "/s") }
+	nerd := m.cfg.NerdFonts
+	icon := func(kind, label string) string {
+		if nerd {
+			return ui.Icon(kind, true) + " "
+		}
+		return label + " "
+	}
 
 	bgFor := func(warn, crit, v float64) string {
 		switch {
@@ -653,32 +785,42 @@ func (m *Model) liveChips() []string {
 	var chips []string
 	spark := canvas.Sparkline(m.cpuHist, canvas.Ramp{pal.BG}) // uncolored inside the chip
 	chips = append(chips, m.chip(bgFor(t.CPUWarn, t.CPUCrit, m.latest.CPU.Percent),
-		"cpu "+spark+fmt.Sprintf(" %.0f%%", m.latest.CPU.Percent)))
+		icon("cpu", "cpu")+spark+fmt.Sprintf(" %.0f%%", m.latest.CPU.Percent)))
 	chips = append(chips, m.chip(bgFor(t.MemWarn, t.MemCrit, m.latest.Mem.Percent),
-		fmt.Sprintf("mem %.0f%%", m.latest.Mem.Percent)))
+		icon("mem", "mem")+fmt.Sprintf("%.0f%%", m.latest.Mem.Percent)))
 
 	var rx, tx float64
 	for _, n := range m.latest.Nets {
 		rx += n.RxRate
 		tx += n.TxRate
 	}
-	chips = append(chips, m.chip(pal.Blue, fmt.Sprintf("↓%s ↑%s", short(rx), short(tx))))
+	chips = append(chips, m.chip(pal.Blue, fmt.Sprintf("↓%s ↑%s",
+		shortRateFixed(rx), shortRateFixed(tx))))
 
 	if len(m.latest.Sensors) > 0 {
 		s := m.latest.Sensors[0]
-		chips = append(chips, m.chip(bgFor(t.TempWarn, t.TempCrit, s.TempC),
-			fmt.Sprintf("%.0f°C", s.TempC)))
+		label := fmt.Sprintf("%.0f°C", s.TempC)
+		if g := ui.Icon("temp", nerd); g != "" {
+			label = g + " " + label
+		}
+		chips = append(chips, m.chip(bgFor(t.TempWarn, t.TempCrit, s.TempC), label))
 	}
 	if bat := m.latest.Battery; bat != nil {
-		icon := "bat"
+		label := icon("bat", "bat")
 		if bat.Charging {
-			icon = "⚡"
+			label = ui.Icon("bolt", nerd) + " " // the charging bolt
 		}
 		bg := pal.Green
 		if !bat.Charging && bat.Percent <= 30 {
 			bg = pal.Red
 		}
-		chips = append(chips, m.chip(bg, fmt.Sprintf("%s%.0f%%", icon, bat.Percent)))
+		chips = append(chips, m.chip(bg, fmt.Sprintf("%s%.0f%%", label, bat.Percent)))
 	}
 	return chips
+}
+
+// shortRateFixed renders a rate without the "/s" suffix, padded to a
+// stable width so chip pairs stay put between refreshes.
+func shortRateFixed(bps float64) string {
+	return strings.TrimSuffix(format.RateFixed(9, bps), "/s")
 }

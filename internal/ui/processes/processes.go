@@ -40,7 +40,7 @@ type Model struct {
 	editing   bool // filter input active
 	tree      bool // parent-child view
 	collapsed map[int32]bool
-	cpuRamp   canvas.Ramp // value-colored CPU column
+	visible   bool // the active tab; hidden tabs skip table rebuilds
 
 	confirm *killConfirm // non-nil while the signal prompt is open
 	detail  *procDetail  // non-nil while the detail box is shown
@@ -79,24 +79,44 @@ func New(cfg *config.Config, th *theme.Theme) *Model {
 		table.WithWidth(tableWidth(100)),
 		table.WithHeight(20),
 	)
-	return &Model{
+	m := &Model{
 		cfg:       cfg,
 		th:        th,
 		table:     t,
 		input:     in,
 		desc:      true,
 		collapsed: make(map[int32]bool),
-		cpuRamp:   canvas.Ramp{th.Palette.Green, th.Palette.Yellow, th.Palette.Orange, th.Palette.Red},
+		visible:   true, // the app dims non-active tabs right after New
+	}
+	m.applyTableStyles()
+	return m
+}
+
+// SetVisible implements ui.Tab. Hidden tabs keep the latest snapshot
+// but skip the 700-row rebuild; activation catches up.
+func (m *Model) SetVisible(visible bool) {
+	m.visible = visible
+	if visible {
+		m.rebuild()
 	}
 }
 
+// applyTableStyles themes the table: muted header, soft accent fill on
+// the focused row.
+func (m *Model) applyTableStyles() {
+	ts := table.DefaultStyles()
+	ts.Header = ts.Header.Foreground(lipgloss.Color(m.th.Palette.Gray))
+	ts.Selected = m.th.Styles.Selected.Padding(0, 1)
+	m.table.SetStyles(ts)
+}
+
 // Title implements ui.Tab.
-func (m *Model) Title() string { return "⚙ PROCESSES" }
+func (m *Model) Title() string { return ui.Icon("proc", m.cfg.NerdFonts) + " PROCESSES" }
 
 // SetTheme implements ui.Tab.
 func (m *Model) SetTheme(th *theme.Theme) {
 	m.th = th
-	m.cpuRamp = canvas.Ramp{th.Palette.Green, th.Palette.Yellow, th.Palette.Orange, th.Palette.Red}
+	m.applyTableStyles()
 }
 
 // SetSize implements ui.Tab.
@@ -104,7 +124,8 @@ func (m *Model) SetSize(width, height int) {
 	m.width, m.height = width, height
 	m.table.SetWidth(tableWidth(width))
 	m.table.SetHeight(max(3, height-4)) // info line + footer
-	m.table.SetColumns(columns(width))
+	ui.SetTableColumns(&m.table, columns(width))
+	m.rebuild() // resize can change the column shape; rows must follow
 }
 
 // Update implements ui.Tab.
@@ -112,7 +133,9 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
 	case collector.SnapshotMsg:
 		m.procs = msg.Snap.Procs
-		m.rebuild()
+		if m.visible { // hidden: skip the heavy rebuild, catch up on activate
+			m.rebuild()
+		}
 		return nil
 
 	case tea.MouseWheelMsg:
@@ -296,7 +319,11 @@ func (m *Model) openConfirm(force bool) tea.Cmd {
 	if len(m.rows) == 0 {
 		return nil
 	}
-	p := m.rows[m.table.Cursor()].Proc
+	cur := m.table.Cursor()
+	if cur < 0 || cur >= len(m.rows) {
+		return nil
+	}
+	p := m.rows[cur].Proc
 	c := &killConfirm{pid: p.PID, name: p.Name, sigs: procs.AvailableSignals()}
 	if force {
 		c.sig = killSignalIndex(c.sigs)
@@ -347,6 +374,13 @@ func (m *Model) rebuild() {
 			m.detail = nil // the selected process exited
 		}
 	}
+	// a cleared or shrunken table can leave the cursor out of range;
+	// every consumer assumes a valid index
+	if cur := m.table.Cursor(); cur < 0 || cur >= len(m.rows) {
+		if len(m.rows) > 0 {
+			m.table.SetCursor(0)
+		}
+	}
 }
 
 // rowName renders the NAME cell; tree rows get depth guides and a
@@ -373,8 +407,7 @@ func (m *Model) rowName(node procs.TreeNode) string {
 func (m *Model) row(node procs.TreeNode) table.Row {
 	p := node.Proc
 	// CPU colored along the value ramp, MEM by thresholds
-	cpuStyle := lipgloss.NewStyle().Foreground(
-		lipgloss.Color(m.cpuRamp.At(min(p.CPU, 100) / 100)))
+	cpuStyle := m.th.Ramps.CPU.StyleAt(min(p.CPU, 100) / 100)
 	mem := m.th.Value(m.cfg.Thresholds.MemWarn, m.cfg.Thresholds.MemCrit, p.Mem)
 	state := m.th.Styles.Muted
 	switch p.State {
@@ -385,17 +418,33 @@ func (m *Model) row(node procs.TreeNode) table.Row {
 	case "T":
 		state = m.th.Styles.Warn
 	}
-	return table.Row{
+	row := table.Row{
 		fmt.Sprintf("%7d", p.PID),
 		m.rowName(node),
 		cpuStyle.Render(format.CPUPct(p.CPU)),
+	}
+	if m.width >= activityMinWidth { // the CPU meter column, wide terminals only
+		bar := canvas.GradientBar(10, min(p.CPU, 100)/100, m.th.Ramps.CPU, m.th.Styles.Track)
+		if pad := activityWidth - lipgloss.Width(bar); pad > 0 {
+			bar += strings.Repeat(" ", pad)
+		}
+		row = append(row, bar)
+	}
+	row = append(row,
 		mem.Render(fmt.Sprintf("%5.1f", p.Mem)),
 		fmt.Sprintf("%6s", format.Bytes(p.RSS)),
 		ui.Trunc(p.User, 12),
 		fmt.Sprintf("%3d", p.Threads),
 		state.Render(p.State),
-	}
+	)
+	return row
 }
+
+// activityMinWidth/activityWidth gate the per-process CPU meter column.
+const (
+	activityMinWidth = 112
+	activityWidth    = 12
+)
 
 // killKey returns the configured terminate key, lowercased; its uppercase
 // variant jumps the picker straight to SIGKILL.
@@ -448,7 +497,7 @@ func (m *Model) detailView() string {
 		cmd,
 	}, "\n")
 	return ui.Box(ui.BorderFor(m.cfg.Border), st.Border, st.BorderChar, st.BorderTitle,
-		"PROCESS", body)
+		"PROCESS", "", body)
 }
 
 func (m *Model) infoView() string {
@@ -511,23 +560,33 @@ func (m *Model) confirmView() string {
 		fmt.Sprintf("SIG%s (%s) → %d (%s)?  ", sig.Name, sig.Desc,
 			m.confirm.pid, ui.Trunc(m.confirm.name, 24)))
 	return ui.Box(ui.BorderFor(m.cfg.Border), m.th.Styles.Border, m.th.Styles.BorderChar,
-		m.th.Styles.BorderTitle, "SIGNAL", body)
+		m.th.Styles.BorderTitle, "SIGNAL", "", body)
 }
 
-// columns builds the table header; NAME absorbs the remaining width.
+// columns builds the table header; NAME absorbs the remaining width. The
+// ACTIVITY meter column appears only on wide terminals — rows() and this
+// must consult the same predicate.
 func columns(width int) []table.Column {
 	fixed := 7 + 6 + 6 + 7 + 12 + 4 + 2
+	if width >= activityMinWidth {
+		fixed += activityWidth
+	}
 	nameW := max(16, width-fixed)
-	return []table.Column{
+	cols := []table.Column{
 		{Title: "PID", Width: 7},
 		{Title: "NAME", Width: nameW},
 		{Title: "CPU%", Width: 6},
-		{Title: "MEM%", Width: 6},
-		{Title: "RSS", Width: 7},
-		{Title: "USER", Width: 12},
-		{Title: "THR", Width: 4},
-		{Title: "S", Width: 2},
 	}
+	if width >= activityMinWidth {
+		cols = append(cols, table.Column{Title: "ACTIVITY", Width: activityWidth})
+	}
+	return append(cols,
+		table.Column{Title: "MEM%", Width: 6},
+		table.Column{Title: "RSS", Width: 7},
+		table.Column{Title: "USER", Width: 12},
+		table.Column{Title: "THR", Width: 4},
+		table.Column{Title: "S", Width: 2},
+	)
 }
 
 func tableWidth(width int) int { return max(40, width) }

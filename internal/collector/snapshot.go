@@ -24,6 +24,7 @@ type Snapshot struct {
 	Disks   []Disk     `json:"disks,omitempty"`
 	DiskIOs []DiskIO   `json:"disk_ios,omitempty"`
 	Nets    []NetIface `json:"nets,omitempty"`
+	Conns   []Conn     `json:"conns,omitempty"`
 }
 
 // Proc is one process sample. CPU is an interval delta (htop-style) and
@@ -136,6 +137,18 @@ type NetIface struct {
 	TxRate        float64 `json:"tx_rate"` // bytes/s
 	RxRatePackets float64 `json:"rx_pps"`
 	TxRatePackets float64 `json:"tx_pps"`
+	RxDrop        float64 `json:"rx_drops"` // drops/s
+	TxDrop        float64 `json:"tx_drops"` // drops/s
 	RxTotal       uint64  `json:"rx_total"`
 	TxTotal       uint64  `json:"tx_total"`
+}
+
+// Conn is one live TCP connection from the socket table. PID is
+// best-effort — some platforms only resolve it with privileges, so it
+// may stay zero and the process column renders as "—".
+type Conn struct {
+	Local  string `json:"local"`  // ip:port (IPv6 bracketed)
+	Remote string `json:"remote"` // ip:port, zero port for listeners
+	State  string `json:"state"`
+	PID    int32  `json:"pid,omitempty"`
 }

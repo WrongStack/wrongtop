@@ -4,6 +4,7 @@ package disks
 
 import (
 	"fmt"
+	"strings"
 
 	"charm.land/bubbles/v2/table"
 	"charm.land/bubbletea/v2"
@@ -17,6 +18,13 @@ import (
 	"github.com/wrongstack/wrongtop/internal/ui/canvas"
 )
 
+// activitySamples is the history length of the per-device ACTIVITY
+// sparklines; activityWidth is the column's cell width.
+const (
+	activitySamples = 12
+	activityWidth   = 12
+)
+
 // Model is the disks tab.
 type Model struct {
 	cfg *config.Config
@@ -26,11 +34,12 @@ type Model struct {
 	table         table.Model
 	io            table.Model
 	focus         int // 0 = filesystem table, 1 = io table
-	usageRamp     canvas.Ramp
 
+	hist    map[string][]float64 // per-device total I/O rate history
 	disks   []collector.Disk
 	diskIOs []collector.DiskIO
 	live    bool
+	visible bool // the active tab; hidden tabs skip table rebuilds
 }
 
 // New builds the disks tab.
@@ -38,23 +47,46 @@ func New(cfg *config.Config, th *theme.Theme) *Model {
 	t := table.New(table.WithFocused(true), table.WithWidth(100), table.WithHeight(12))
 	io := table.New(table.WithFocused(false), table.WithWidth(100), table.WithHeight(8))
 	t.SetColumns(usageColumns(100)) // sane defaults until SetSize arrives
-	io.SetColumns(ioColumns(100))
-	return &Model{
-		cfg:       cfg,
-		th:        th,
-		table:     t,
-		io:        io,
-		usageRamp: canvas.Ramp{th.Palette.Green, th.Palette.Yellow, th.Palette.Orange, th.Palette.Red},
+	io.SetColumns(ioColumns(100, true))
+	m := &Model{cfg: cfg, th: th, table: t, io: io, hist: make(map[string][]float64), visible: true}
+	m.applyTableStyles()
+	return m
+}
+
+// SetVisible implements ui.Tab. Hidden tabs keep their history warm but
+// skip the row rebuild; activation catches up.
+func (m *Model) SetVisible(visible bool) {
+	m.visible = visible
+	if visible {
+		m.rebuild()
+	}
+}
+
+// applyTableStyles themes both tables: muted headers, and the soft
+// accent fill follows whichever table owns the focus.
+func (m *Model) applyTableStyles() {
+	muted := table.DefaultStyles()
+	muted.Header = muted.Header.Foreground(lipgloss.Color(m.th.Palette.Gray))
+
+	focused := muted
+	focused.Selected = m.th.Styles.Selected.Padding(0, 1)
+
+	m.table.SetStyles(muted)
+	m.io.SetStyles(muted)
+	if m.focus == 1 {
+		m.io.SetStyles(focused)
+	} else {
+		m.table.SetStyles(focused)
 	}
 }
 
 // Title implements ui.Tab.
-func (m *Model) Title() string { return "▤ DISKS" }
+func (m *Model) Title() string { return ui.Icon("disk", m.cfg.NerdFonts) + " DISKS" }
 
 // SetTheme implements ui.Tab.
 func (m *Model) SetTheme(th *theme.Theme) {
 	m.th = th
-	m.usageRamp = canvas.Ramp{th.Palette.Green, th.Palette.Yellow, th.Palette.Orange, th.Palette.Red}
+	m.applyTableStyles()
 }
 
 // SetSize implements ui.Tab.
@@ -65,8 +97,9 @@ func (m *Model) SetSize(width, height int) {
 	m.table.SetHeight(h)
 	m.io.SetWidth(width)
 	m.io.SetHeight(max(2, height-8-h))
-	m.table.SetColumns(usageColumns(width))
-	m.io.SetColumns(ioColumns(width))
+	ui.SetTableColumns(&m.table, usageColumns(width))
+	ui.SetTableColumns(&m.io, ioColumns(width, width >= 90))
+	m.rebuild() // resize can change the column shape; rows must follow
 }
 
 // Update implements ui.Tab.
@@ -76,7 +109,10 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 		m.disks = msg.Snap.Disks
 		m.diskIOs = msg.Snap.DiskIOs
 		m.live = true
-		m.rebuild()
+		m.recordIO()
+		if m.visible {
+			m.rebuild()
+		}
 		return nil
 
 	case tea.MouseWheelMsg:
@@ -123,6 +159,7 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 			m.focusedTable().MoveDown(1)
 		case "left", "right":
 			m.focus = 1 - m.focus
+			m.applyTableStyles() // the selection fill follows the focus
 		}
 		return nil
 	}
@@ -137,6 +174,25 @@ func (m *Model) focusedTable() *table.Model {
 	return &m.table
 }
 
+// recordIO appends one total-rate sample per device for the ACTIVITY
+// sparklines; the map is bounded against device-name churn.
+func (m *Model) recordIO() {
+	if len(m.hist) > 128 {
+		m.hist = make(map[string][]float64)
+	}
+	for _, d := range m.diskIOs {
+		h := append(m.hist[d.Name], d.ReadBytes+d.WriteBytes)
+		if len(h) > activitySamples {
+			h = h[len(h)-activitySamples:]
+		}
+		m.hist[d.Name] = h
+	}
+}
+
+// showActivity reports whether the I/O table has room for the ACTIVITY
+// sparkline column.
+func (m *Model) showActivity() bool { return m.width >= 90 }
+
 func (m *Model) rebuild() {
 	rows := make([]table.Row, len(m.disks))
 	full := usageMode(m.width) == 2 // TYPE + USED/TOTAL columns present
@@ -150,7 +206,7 @@ func (m *Model) rebuild() {
 			row = append(row, ui.Trunc(d.FSType, 8))
 		}
 		row = append(row,
-			style.Render(canvas.GradientBar(14, d.Percent/100, m.usageRamp, m.th.Styles.Muted)))
+			style.Render(canvas.GradientBar(14, d.Percent/100, m.th.Ramps.CPU, m.th.Styles.Track)))
 		if full {
 			// compact byte formatting keeps wide counts inside the
 			// 8-cell columns ("128 GiB" instead of a clipped "999.9 GiB")
@@ -168,8 +224,15 @@ func (m *Model) rebuild() {
 	for i, d := range m.diskIOs {
 		row := table.Row{
 			ui.Trunc(d.Name, 16),
-			fmt.Sprintf("%9s", format.Rate(d.ReadBytes)),
-			fmt.Sprintf("%9s", format.Rate(d.WriteBytes)),
+			fmt.Sprintf("%10s", format.Rate(d.ReadBytes)),
+			fmt.Sprintf("%10s", format.Rate(d.WriteBytes)),
+		}
+		if m.showActivity() {
+			spark := canvas.SparklineScaled(m.hist[d.Name], m.th.Ramps.IO)
+			if pad := activityWidth - lipgloss.Width(spark); pad > 0 {
+				spark += strings.Repeat(" ", pad) // keep the cell at column width
+			}
+			row = append(row, spark)
 		}
 		if iops {
 			row = append(row,
@@ -243,11 +306,14 @@ func usageColumns(width int) []table.Column {
 	return append(cols, table.Column{Title: "USE%", Width: 5})
 }
 
-func ioColumns(width int) []table.Column {
+func ioColumns(width int, activity bool) []table.Column {
 	cols := []table.Column{
 		{Title: "DEVICE", Width: 16},
-		{Title: "READ/s", Width: 9},
-		{Title: "WRITE/s", Width: 9},
+		{Title: "READ/s", Width: 10},
+		{Title: "WRITE/s", Width: 10},
+	}
+	if activity {
+		cols = append(cols, table.Column{Title: "ACTIVITY", Width: activityWidth})
 	}
 	if width >= 76 { // IOPS figures are the first to go on narrow terms
 		cols = append(cols,

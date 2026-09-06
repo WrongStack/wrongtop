@@ -121,3 +121,58 @@ func TestFrameSquareCorners(t *testing.T) {
 		t.Errorf("junctions must survive the corner swap: %q", lines[7])
 	}
 }
+
+// TestFrameRightReadout pins the border chrome: title leads at the
+// panel's left edge, the live readout trails flush right, and neither
+// overlaps the shared-divider junctions.
+func TestFrameRightReadout(t *testing.T) {
+	panels := []Panel{
+		{X: 0, Y: 0, W: 20, H: 4, Title: "CPU", Right: "47%", Lines: []string{"x"}},
+		{X: 20, Y: 0, W: 20, H: 4, Title: "MEM", Right: "62%", Lines: []string{"y"}},
+	}
+	out := Frame(panels, noStyle(""), lipgloss.RoundedBorder())
+	lines := strings.Split(out, "\n")
+	if len(lines) != 4 {
+		t.Fatalf("height = %d, want 4", len(lines))
+	}
+	plain := stripANSIFrame(lines[0])
+	if !strings.HasPrefix(plain, "╭ CPU") {
+		t.Errorf("title should lead the border line: %q", plain)
+	}
+	if !strings.Contains(plain, "47%┬") {
+		t.Errorf("readout should end at the panel's own edge: %q", plain)
+	}
+	if !strings.Contains(plain, "62%╮") {
+		t.Errorf("right panel readout should sit flush at the border: %q", plain)
+	}
+	// a panel too narrow for title + readout keeps the title, drops the
+	// readout instead of stretching the frame
+	small := Frame([]Panel{{X: 0, Y: 0, W: 10, H: 3, Title: "T", Right: "very-long-readout"}},
+		noStyle(""), lipgloss.RoundedBorder())
+	if got := lipgloss.Width(small); got != 10 {
+		t.Errorf("crowded readout stretched the frame to %d", got)
+	}
+	if !strings.Contains(stripANSIFrame(small), "╭ T ") {
+		t.Errorf("title lost when the readout was dropped: %q", stripANSIFrame(small))
+	}
+}
+
+// stripANSIFrame removes SGR sequences so pinned geometry is readable.
+func stripANSIFrame(s string) string {
+	var b strings.Builder
+	inEsc := false
+	for _, r := range s {
+		if inEsc {
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+				inEsc = false
+			}
+			continue
+		}
+		if r == '\x1b' {
+			inEsc = true
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}

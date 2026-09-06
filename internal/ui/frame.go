@@ -15,6 +15,9 @@ type Panel struct {
 	X, Y, W, H int
 	Title      string
 	TitleStyle lipgloss.Style
+	// Right is a pre-styled live value (e.g. "47.2% · 45°C") spliced
+	// right-aligned into the top border line — the btop panel readout.
+	Right string
 	// Border colors this panel's border cells individually; nil falls
 	// back to the Frame-wide border style.
 	Border *lipgloss.Style
@@ -170,7 +173,7 @@ func Frame(panels []Panel, border lipgloss.Style, corners lipgloss.Border) strin
 		x := 0
 		spans := rows[y]
 		for _, sp := range spans {
-			for ; x < sp.x0; x++ {
+			for x < sp.x0 { // border cells left of the span
 				run := x + 1
 				for run < sp.x0 && owner[y][run] == owner[y][x] {
 					run++
@@ -181,7 +184,7 @@ func Frame(panels []Panel, border lipgloss.Style, corners lipgloss.Border) strin
 			b.WriteString(sp.text)
 			x = sp.x1
 		}
-		for ; x < W; x++ {
+		for x < W { // border cells after the last span
 			run := x + 1
 			for run < W && owner[y][run] == owner[y][x] {
 				run++
@@ -192,8 +195,10 @@ func Frame(panels []Panel, border lipgloss.Style, corners lipgloss.Border) strin
 		out[y] = b.String()
 	}
 
-	// titles go on last so they sit cleanly in the top border, shifted
-	// off any junction column the divider crossing would put in the way
+	// chrome goes on last so it sits cleanly in the top border: the
+	// title leads from the panel's left edge and the live value trails
+	// flush against the right border, each shifted off any junction
+	// column the divider crossings put in the way.
 	junction := func(y, x int) bool {
 		switch mark[y][x] {
 		case '┬', '┼', '├', '┤', '┴':
@@ -201,40 +206,38 @@ func Frame(panels []Panel, border lipgloss.Style, corners lipgloss.Border) strin
 		}
 		return false
 	}
-	for _, p := range panels {
-		label := " " + p.Title + " "
-		lw := lipgloss.Width(label)
-		lo, hi := p.X+1, p.X+p.W-1-lw
-		if hi < lo {
-			continue // too narrow for a title
+	junctionFree := func(y, start, w int) bool {
+		for x := start; x < start+w; x++ {
+			if junction(y, x) {
+				return false
+			}
 		}
-		center := (lo + hi) / 2
-		start := -1
-		for offset := 0; ; offset++ { // nearest junction-free spot to center
-			for _, s := range []int{center - offset, center + offset} {
-				if s < lo || s > hi {
-					continue
-				}
-				clean := true
-				for x := s; x < s+lw; x++ {
-					if junction(p.Y, x) {
-						clean = false
-						break
-					}
-				}
-				if clean {
-					start = s
+		return true
+	}
+	for _, p := range panels {
+		lo := p.X + 1       // first content column
+		hi := p.X + p.W - 2 // last content column
+		used := lo          // right chrome must clear the title
+		if label := " " + p.Title + " "; label != "  " {
+			lw := lipgloss.Width(label)
+			for start := lo; start+lw-1 <= hi; start++ {
+				if junctionFree(p.Y, start, lw) {
+					out[p.Y] = spliceStyled(out[p.Y], start, label, p.TitleStyle)
+					used = start + lw
 					break
 				}
 			}
-			if start >= 0 || lo+offset > hi-offset {
-				break // found, or every spot blocked
-			}
 		}
-		if start < 0 {
+		if p.Right == "" {
 			continue
 		}
-		out[p.Y] = spliceStyled(out[p.Y], start, label, p.TitleStyle)
+		rw := lipgloss.Width(p.Right)
+		start := hi - rw + 1 // end flush against the right border
+		for ; start >= used && !junctionFree(p.Y, start, rw); start-- {
+		}
+		if start >= used {
+			out[p.Y] = spliceStyled(out[p.Y], start, p.Right, lipgloss.NewStyle())
+		}
 	}
 	return strings.Join(out, "\n")
 }

@@ -13,6 +13,7 @@ import (
 // help overlay.
 type helpSection struct {
 	title string
+	icon  string // ui.Icon name rendered before the title, "" = none
 	lines []string
 }
 
@@ -38,8 +39,16 @@ func (m *Model) helpSections() []helpSection {
 		},
 		{
 			title: "DISKS",
+			icon:  "disk",
 			lines: []string{
 				"left/right switch usage / I/O table",
+				"up/down    move selection",
+			},
+		},
+		{
+			title: "CONNECTIONS",
+			icon:  "conn",
+			lines: []string{
 				"up/down    move selection",
 			},
 		},
@@ -47,6 +56,7 @@ func (m *Model) helpSections() []helpSection {
 	if m.cfg.Modules.Processes {
 		secs = append(secs, helpSection{
 			title: "PROCESSES",
+			icon:  "proc",
 			lines: []string{
 				m.cfg.Keys.Filter + "          filter by name, user or pid",
 				"s          cycle sort column",
@@ -64,6 +74,7 @@ func (m *Model) helpSections() []helpSection {
 	if m.cfg.Modules.Docker {
 		secs = append(secs, helpSection{
 			title: "DOCKER",
+			icon:  "docker",
 			lines: []string{
 				"enter      follow container logs",
 				"s          start container",
@@ -94,7 +105,11 @@ func (m *Model) helpView() string {
 			if i > 0 {
 				b.WriteString("\n\n")
 			}
-			b.WriteString(st.Title.Render(sec.title))
+			label := sec.title
+			if sec.icon != "" {
+				label = ui.Icon(sec.icon, m.cfg.NerdFonts) + " " + sec.title
+			}
+			b.WriteString(st.Title.Render(label))
 			for _, l := range sec.lines {
 				key, desc, _ := strings.Cut(l, "  ")
 				key = strings.TrimSpace(key)
@@ -118,7 +133,7 @@ func (m *Model) helpView() string {
 	b.WriteString(body)
 	b.WriteString("\n\n  " + st.HelpKey.Render("esc") + st.HelpText.Render(" close"))
 	return ui.Box(ui.BorderFor(m.cfg.Border), st.Border, st.BorderChar, st.BorderTitle,
-		"WRONGTOP HELP", b.String())
+		"WRONGTOP HELP", "", b.String())
 }
 
 // pad right-pads to n display cells (runes, not bytes).

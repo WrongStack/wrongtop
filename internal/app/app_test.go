@@ -15,7 +15,10 @@ import (
 func TestNewTabsRespectModules(t *testing.T) {
 	all := config.Default()
 	m := New(all, "", "test")
-	want := []string{"⌂ DASHBOARD", "⚙ PROCESSES", "▣ DOCKER", "▤ DISKS", "⇅ NETWORK"}
+	want := []string{
+		"⌂ DASHBOARD", "☰ PROCESSES", "▣ DOCKER", "▤ DISKS", "⇅ NETWORK",
+		"♨ SENSORS", "⇄ CONNECTIONS",
+	}
 	if len(m.tabs) != len(want) {
 		t.Fatalf("default modules: got %d tabs, want %d", len(m.tabs), len(want))
 	}
@@ -96,12 +99,104 @@ func TestTabBarAlertChips(t *testing.T) {
 	if m.alertZoneStart < 0 || m.alertZoneStart >= m.width {
 		t.Errorf("alert zone not mapped for clicks: start=%d width=%d", m.alertZoneStart, m.width)
 	}
-	if _, ok := m.tabAt(m.width-1); ok {
+	if _, ok := m.tabAt(m.width - 1); ok {
 		t.Error("right edge of the tab bar must not resolve to a tab")
 	}
 	// chip text is softened toward the background; check the crit color leaks through
 	if !strings.Contains(out, ";48;2;") {
 		t.Error("alert chip lost its background color")
+	}
+}
+
+// TestTabBarIconFirstDegradation pins the width-pressure ladder: before
+// anything is dropped, inactive tabs collapse to their icons while the
+// active tab keeps its label — and the recorded click bounds follow.
+func TestTabBarIconFirstDegradation(t *testing.T) {
+	cfg := config.Default()
+	m := New(cfg, "", "test")
+	m.width = 44 // too narrow for five full labels plus the clock
+
+	out := m.tabBarView()
+	if !strings.Contains(out, "DASHBOARD") {
+		t.Errorf("active tab should keep its label: %q", stripANSITest(out))
+	}
+	if strings.Contains(out, "PROCESSES") {
+		t.Errorf("inactive tabs should collapse to their icons: %q", stripANSITest(out))
+	}
+	activeW := m.tabBounds[0][1] - m.tabBounds[0][0]
+	idleW := m.tabBounds[1][1] - m.tabBounds[1][0]
+	if idleW > 4 || idleW >= activeW {
+		t.Errorf("compact tab bounds should cover the icon only: active=%d idle=%d", activeW, idleW)
+	}
+}
+
+// stripANSITest removes SGR sequences so pinned text is readable.
+func stripANSITest(s string) string {
+	var b strings.Builder
+	inEsc := false
+	for _, r := range s {
+		if inEsc {
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+				inEsc = false
+			}
+			continue
+		}
+		if r == '\x1b' {
+			inEsc = true
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+// TestStatusBarDockedToBottom pins the chrome contract: whatever the
+// active tab renders (here: the dashboard's pre-sample waiting box, a
+// couple of lines), the frame is always exactly the full screen and the
+// status bar sits on the last row — never right after short content.
+func TestStatusBarDockedToBottom(t *testing.T) {
+	cfg := config.Default()
+	m := New(cfg, "", "test")
+	m.width, m.height = 100, 30
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+
+	out := m.frame()
+	lines := strings.Split(out, "\n")
+	if len(lines) != 30 {
+		t.Fatalf("frame has %d lines, want the full 30", len(lines))
+	}
+	if last := lines[len(lines)-1]; !strings.Contains(last, "WRONGTOP") {
+		t.Errorf("status bar not on the bottom row: %q", last)
+	}
+	if !strings.Contains(out, "waiting for samples") {
+		t.Errorf("short content missing from the frame:\n%s", stripANSITest(out))
+	}
+}
+
+// TestResizeAcrossColumnThresholds is the resize-crash regression: a
+// bubbles table panics in renderRow when its column count changes while
+// stale rows are in place, and WindowSizeMsg reaches every tab. Stomp
+// the terminal width back and forth across all five tabs' thresholds
+// (docker 146/118/94, processes 112, network 100/112/88, disks 90/76,
+// conns 108/84) — it must never panic.
+func TestResizeAcrossColumnThresholds(t *testing.T) {
+	m := New(config.Default(), "", "test")
+	m.Update(tea.WindowSizeMsg{Width: 200, Height: 40})
+	m.Update(dockerclient.UpdateMsg{Client: &dockerclient.Client{}, Containers: []dockerclient.Container{{
+		ID: "abc", Name: "web", Image: "nginx", State: "running",
+		CPU: 12, Mem: 1 << 28, MemPct: 4, Status: "Up 2 hours (healthy)",
+	}}})
+	m.Update(collector.SnapshotMsg{Snap: collector.Snapshot{
+		Time:    time.Now(),
+		CPU:     collector.CPU{Percent: 40, Cores: []float64{10, 20, 30, 40, 50, 60}},
+		Procs:   []collector.Proc{{PID: 1, Name: "x", CPU: 5, Mem: 1, RSS: 1 << 20, User: "u", State: "S"}},
+		DiskIOs: []collector.DiskIO{{Name: "disk0", ReadBytes: 1, WriteBytes: 1, BusyPercent: 9}},
+		Nets:    []collector.NetIface{{Name: "en0", RxRate: 10, TxRate: 10}},
+		Conns:   []collector.Conn{{Local: "a:1", Remote: "b:2", State: "ESTABLISHED", PID: 1}},
+		Disks:   []collector.Disk{{Device: "/dev/s1", Mountpoint: "/", Total: 1 << 30, Percent: 9}},
+	}})
+	for _, w := range []int{200, 146, 145, 118, 117, 112, 111, 109, 100, 99, 90, 89, 88, 76, 60, 200, 76} {
+		m.Update(tea.WindowSizeMsg{Width: w, Height: 40})
 	}
 }
 

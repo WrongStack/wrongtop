@@ -11,11 +11,11 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/wrongstack/wrongtop/internal/app"
 	"github.com/wrongstack/wrongtop/internal/collector"
 	"github.com/wrongstack/wrongtop/internal/config"
 	"github.com/wrongstack/wrongtop/internal/remote"
-	"github.com/spf13/cobra"
 )
 
 // version is set at build time via -ldflags.

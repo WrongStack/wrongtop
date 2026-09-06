@@ -48,8 +48,10 @@ type Config struct {
 
 // Modules toggles optional feature tabs.
 type Modules struct {
-	Docker    bool `yaml:"docker"`
-	Processes bool `yaml:"processes"`
+	Docker      bool `yaml:"docker"`
+	Processes   bool `yaml:"processes"`
+	Sensors     bool `yaml:"sensors"`     // temperatures, fans, battery
+	Connections bool `yaml:"connections"` // live TCP table
 }
 
 // Thresholds controls when metric values change from normal to warning to
@@ -74,7 +76,7 @@ func Default() *Config {
 	return &Config{
 		Theme:   "tokyo-night",
 		Refresh: Duration(time.Second),
-		Modules: Modules{Docker: true, Processes: true},
+		Modules: Modules{Docker: true, Processes: true, Sensors: true, Connections: true},
 		Thresholds: Thresholds{
 			CPUWarn: 70, CPUCrit: 90,
 			MemWarn: 80, MemCrit: 95,
@@ -90,13 +92,14 @@ const Sample = `# ~/.config/wrongtop/config.yaml
 theme: tokyo-night       # 10 built-ins, or a file in ~/.config/wrongtop/themes
 refresh: 1s              # min 250ms, max 10s
 layout: full             # full | compact | minimal (p cycles it live)
-nerd_fonts: false        # powerline separators in the status bar and tabs
-border: rounded          # rounded | square panel corners (btop-style toggle)
+nerd_fonts: false        # true: icon glyphs + powerline separators in tabs, panels, status bar
+border: rounded          # rounded | square | thick | double panel corners
 
 modules:
   docker: true           # show the DOCKER tab (daemon optional)
   processes: true
-
+  sensors: true          # show the SENSORS tab (temps, fans, battery)
+  connections: true      # show the CONNECTIONS tab (live TCP table)
 thresholds:              # percent → warn/critical coloring
   cpu_warn: 70
   cpu_crit: 90
@@ -156,7 +159,7 @@ func (c *Config) normalize() {
 		c.Refresh = Duration(10 * time.Second)
 	}
 	if c.Theme == "" {
-		c.Theme = "gruvbox-dark"
+		c.Theme = "tokyo-night"
 	}
 	switch c.Layout {
 	case "full", "compact", "minimal":
@@ -164,7 +167,7 @@ func (c *Config) normalize() {
 		c.Layout = "full"
 	}
 	switch c.Border {
-	case "rounded", "square":
+	case "rounded", "square", "thick", "double":
 	default:
 		c.Border = "rounded"
 	}

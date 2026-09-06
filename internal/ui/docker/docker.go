@@ -32,7 +32,6 @@ type Model struct {
 
 	width, height int
 	table         table.Model
-	cpuRamp       canvas.Ramp
 
 	client *dockerclient.Client
 	cons   []dockerclient.Container
@@ -50,28 +49,44 @@ type Model struct {
 	logStream <-chan string
 	cancelLog context.CancelFunc
 
-	status string // transient action feedback
+	status  string // transient action feedback
+	visible bool   // the active tab; hidden tabs skip table rebuilds
 }
 
 // New builds the docker tab.
 func New(cfg *config.Config, th *theme.Theme) *Model {
 	t := table.New(table.WithFocused(true), table.WithWidth(100), table.WithHeight(18))
 	t.SetColumns(columns(100)) // sane defaults until SetSize arrives
-	return &Model{
-		cfg:     cfg,
-		th:      th,
-		table:   t,
-		cpuRamp: canvas.Ramp{th.Palette.Green, th.Palette.Yellow, th.Palette.Orange, th.Palette.Red},
+	m := &Model{cfg: cfg, th: th, table: t, visible: true}
+	m.applyTableStyles()
+	return m
+}
+
+// SetVisible implements ui.Tab. Hidden tabs keep the latest container
+// list but skip the row rebuild; activation catches up.
+func (m *Model) SetVisible(visible bool) {
+	m.visible = visible
+	if visible {
+		m.rebuild()
 	}
 }
 
+// applyTableStyles themes the table: muted header, soft accent fill on
+// the focused row.
+func (m *Model) applyTableStyles() {
+	ts := table.DefaultStyles()
+	ts.Header = ts.Header.Foreground(lipgloss.Color(m.th.Palette.Gray))
+	ts.Selected = m.th.Styles.Selected.Padding(0, 1)
+	m.table.SetStyles(ts)
+}
+
 // Title implements ui.Tab.
-func (m *Model) Title() string { return "▣ DOCKER" }
+func (m *Model) Title() string { return ui.Icon("docker", m.cfg.NerdFonts) + " DOCKER" }
 
 // SetTheme implements ui.Tab.
 func (m *Model) SetTheme(th *theme.Theme) {
 	m.th = th
-	m.cpuRamp = canvas.Ramp{th.Palette.Green, th.Palette.Yellow, th.Palette.Orange, th.Palette.Red}
+	m.applyTableStyles()
 }
 
 // SetSize implements ui.Tab.
@@ -83,7 +98,8 @@ func (m *Model) SetSize(width, height int) {
 	} else {
 		m.table.SetHeight(max(3, height-4))
 	}
-	m.table.SetColumns(columns(width))
+	ui.SetTableColumns(&m.table, columns(width))
+	m.rebuild() // resize can change the column shape; rows must follow
 }
 
 // Update implements ui.Tab.
@@ -92,9 +108,11 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 	case dockerclient.UpdateMsg:
 		m.client = msg.Client
 		m.err = msg.Err
-		m.updateRates(msg.Containers)
+		m.updateRates(msg.Containers) // rates must keep diffing while hidden
 		m.cons = msg.Containers
-		m.rebuild()
+		if m.visible {
+			m.rebuild()
+		}
 		return nil
 
 	case logLineMsg:
@@ -311,7 +329,7 @@ func (m *Model) rebuild() {
 	l := dockerLayoutFor(m.width)
 	rows := make([]table.Row, len(m.cons))
 	cpuStyle := func(v float64) lipgloss.Style {
-		return lipgloss.NewStyle().Foreground(lipgloss.Color(m.cpuRamp.At(min(v, 100) / 100)))
+		return m.th.Ramps.CPU.StyleAt(min(v, 100) / 100)
 	}
 	for i, c := range m.cons {
 		state := m.th.Styles.Muted.Render(c.State)
@@ -329,9 +347,18 @@ func (m *Model) rebuild() {
 			ui.Trunc(c.Image, l.imageW),
 			state,
 			cpuStyle(c.CPU).Render(format.CPUPct(c.CPU)),
+		}
+		if l.bar { // the CPU meter column, wide terminals only
+			bar := canvas.GradientBar(10, min(c.CPU, 100)/100, m.th.Ramps.CPU, m.th.Styles.Track)
+			if pad := 12 - lipgloss.Width(bar); pad > 0 {
+				bar += strings.Repeat(" ", pad)
+			}
+			row = append(row, bar)
+		}
+		row = append(row,
 			fmt.Sprintf("%10s", format.Bytes(c.Mem)),
 			memPct.Render(fmt.Sprintf("%4.0f%%", c.MemPct)),
-		}
+		)
 		if l.net {
 			r := m.rates[c.ID]
 			row = append(row, fmt.Sprintf("%9s / %-9s", shortRate(r[0]), shortRate(r[1])))
@@ -341,11 +368,27 @@ func (m *Model) rebuild() {
 			row = append(row, fmt.Sprintf("%9s / %-9s", shortRate(r[2]), shortRate(r[3])))
 		}
 		if l.status {
-			row = append(row, ui.Trunc(c.Status, 22))
+			row = append(row, m.statusCell(c.Status).Render(ui.Trunc(c.Status, 22)))
 		}
 		rows[i] = row
 	}
 	m.table.SetRows(rows)
+}
+
+// statusCell colors the docker status string by its health verdict
+// ("Up 2 hours (healthy)"), when one is present.
+func (m *Model) statusCell(status string) lipgloss.Style {
+	l := strings.ToLower(status)
+	switch {
+	case strings.Contains(l, "unhealthy"), strings.Contains(l, "dead"):
+		return m.th.Styles.Crit
+	case strings.Contains(l, "starting"), strings.Contains(l, "restarting"):
+		return m.th.Styles.Warn
+	case strings.Contains(l, "healthy"):
+		return m.th.Styles.OK
+	default:
+		return m.th.Styles.Muted
+	}
 }
 
 // shortRate renders a rate without the "/s" suffix for dense columns.
@@ -401,6 +444,14 @@ func (m *Model) View() string {
 		st.HelpKey.Render("s") + st.HelpText.Render(" start  ") +
 		st.HelpKey.Render("t") + st.HelpText.Render(" stop  ") +
 		st.HelpKey.Render("r") + st.HelpText.Render(" restart")
+	if len(m.cons) == 0 { // daemon reachable but nothing running on it
+		return lipgloss.JoinVertical(lipgloss.Left,
+			st.Muted.Render(head),
+			"",
+			lipgloss.PlaceHorizontal(m.width, lipgloss.Center, st.Muted.Render("□ no containers")),
+			footer,
+		)
+	}
 	return lipgloss.JoinVertical(lipgloss.Left,
 		st.Muted.Render(head),
 		m.table.View(),
@@ -436,22 +487,22 @@ func (m *Model) errMsg() string {
 // full table needs ~160 columns, so extras drop in priority order
 // (BLOCK, then STATUS, then NET) and IMAGE absorbs the remaining slack.
 type dockerLayout struct {
-	net, block, status bool
-	imageW             int
+	net, block, status, bar bool
+	imageW                  int
 }
 
 func dockerLayoutFor(width int) dockerLayout {
 	l := dockerLayout{imageW: 12}
 	switch {
 	case width >= 146:
-		l.net, l.block, l.status = true, true, true
-		l.imageW = max(12, width-132)
+		l.net, l.block, l.status, l.bar = true, true, true, true
+		l.imageW = max(12, width-142)
 	case width >= 118:
-		l.net, l.status = true, true
-		l.imageW = max(12, width-109)
+		l.net, l.status, l.bar = true, true, true
+		l.imageW = max(12, width-119)
 	case width >= 94:
-		l.net = true
-		l.imageW = max(12, width-85)
+		l.net, l.bar = true, true
+		l.imageW = max(12, width-95)
 	default:
 		l.imageW = max(12, width-62)
 	}
@@ -465,9 +516,14 @@ func columns(width int) []table.Column {
 		{Title: "IMAGE", Width: l.imageW},
 		{Title: "STATE", Width: 9},
 		{Title: "CPU%", Width: 6},
-		{Title: "MEM", Width: 10},
-		{Title: "MEM%", Width: 5},
 	}
+	if l.bar {
+		cols = append(cols, table.Column{Title: "ACTIVITY", Width: 12})
+	}
+	cols = append(cols,
+		table.Column{Title: "MEM", Width: 10},
+		table.Column{Title: "MEM%", Width: 5},
+	)
 	if l.net {
 		cols = append(cols, table.Column{Title: "NET ↓/↑", Width: 21})
 	}

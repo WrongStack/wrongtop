@@ -3,8 +3,6 @@ package canvas
 import (
 	"strconv"
 	"strings"
-
-	"charm.land/lipgloss/v2"
 )
 
 // bigDigits is a 5-row, 3-column block font — tall enough to read at a
@@ -42,8 +40,7 @@ func BigNumberWidth(n int) int {
 func BigNumber(v int, ramp Ramp) []string {
 	v = min(max(v, 0), 999)
 	s := strconv.Itoa(v)
-	color := lipgloss.Color(ramp.At(float64(v) / 100))
-	style := lipgloss.NewStyle().Foreground(color).Bold(true)
+	style := ramp.StyleAt(float64(v) / 100).Bold(true)
 
 	lines := make([]string, BigNumberHeight)
 	for row := 0; row < BigNumberHeight; row++ {

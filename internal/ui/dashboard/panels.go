@@ -29,16 +29,20 @@ func (m *Model) hostView(innerW, maxRows int) []string {
 	if cores > 0 {
 		loadStyle = m.th.Value(cores*3/4, cores, h.Load[0])
 		// a small meter scaled to the core count, btop-style
-		loadMeter = " " + canvas.GradientBar(8, clamp01(h.Load[0]/cores), m.cpuRamp, m.th.Styles.Muted)
+		loadMeter = " " + canvas.GradientBar(8, clamp01(h.Load[0]/cores), m.th.Ramps.CPU, m.th.Styles.Track)
 	}
 	lines := []string{
 		m.kv("NAME", ui.Trunc(h.Hostname, valW)),
 		m.kv("SYS", ui.Trunc(strings.TrimSpace(h.Platform+" "+h.Arch), valW)),
+	}
+	if h.OS != "" { // the full OS name is only shown when the platform reports it
+		lines = append(lines, m.kv("OS", ui.Trunc(h.OS, valW)))
+	}
+	lines = append(lines,
 		m.kv("KERNEL", ui.Trunc(h.Kernel, valW)),
-		m.kv("UPTIME", format.Uptime(h.Uptime)),
 		m.kv("LOAD", loadStyle.Render(fmt.Sprintf("%.2f %.2f %.2f", h.Load[0], h.Load[1], h.Load[2]))+loadMeter),
 		m.kv("PROCS", strconv.Itoa(h.Procs)),
-	}
+	)
 	if h.Users > 0 {
 		lines = append(lines, m.kv("USERS", strconv.Itoa(h.Users)))
 	}
@@ -56,9 +60,9 @@ func (m *Model) hostView(innerW, maxRows int) []string {
 	if b := m.snap.Battery; b != nil {
 		state := "on battery"
 		if b.Charging {
-			state = "charging ⚡"
+			state = "charging " + ui.Icon("bat", m.cfg.NerdFonts)
 		}
-		meter := canvas.GradientBar(8, b.Percent/100, m.batRamp, m.th.Styles.Muted)
+		meter := canvas.GradientBar(8, b.Percent/100, m.th.Ramps.Bat, m.th.Styles.Track)
 		lines = append(lines, m.kv("BATTERY",
 			fmt.Sprintf("%.0f%% ", b.Percent)+meter+m.th.Styles.Muted.Render(" "+state)))
 	}
@@ -97,67 +101,54 @@ func (m *Model) fansRow(maxW int) string {
 	return row
 }
 
-// cpuView renders the total gauge and — on wide panels — the btop-style
-// hero: big block digits beside the scrolling graph, then a full-width
-// gradient meter, sensors and per-core bars. maxLines bounds the output.
+// cpuView renders the CPU panel: a full-width gradient meter, then the
+// total graph, then — on wide grid panels — a btop-style grid of
+// per-core rolling graphs. Narrow panels keep the compact context line
+// and one-row per-core bars instead.
 func (m *Model) cpuView(innerW, maxLines int) []string {
 	c := m.snap.CPU
-	pct := m.th.Value(m.cfg.Thresholds.CPUWarn, m.cfg.Thresholds.CPUCrit, c.Percent).
-		Render(fmt.Sprintf("%.1f%%", c.Percent))
-	head := m.th.Styles.Muted.Render("TOTAL ") + pct
-	// gopsutil reports garbage sub-100MHz clocks on Apple Silicon; a real
-	// core never idles below ~800MHz, so hide anything under 200.
-	if c.FreqMHz >= 200 { //nolint:mnd // plausibility floor
-		head += m.th.Styles.Muted.Render(fmt.Sprintf("  %.1fGHz", c.FreqMHz/1000))
-	}
-	if s := m.hotSensor(); s != nil {
-		style := m.th.Value(m.cfg.Thresholds.TempWarn, m.cfg.Thresholds.TempCrit, s.TempC)
-		head += m.th.Styles.Muted.Render("  ") + style.Render(fmt.Sprintf("%.0f°C", s.TempC))
-	}
-	// busiest single core: spots one hot thread the average hides
-	if len(c.Cores) > 0 {
-		mx := c.Cores[0]
-		for _, v := range c.Cores[1:] {
-			mx = max(mx, v)
-		}
-		head += m.th.Styles.Muted.Render(fmt.Sprintf("  max %.0f%%", mx))
-	}
+	wide := m.heroWorth(innerW, maxLines)
+	var lines []string
 
-	lines := []string{head}
-	// sensors line only in the compact layout: the hero path budgets
-	// head + hero + meter to fit even the shallowest grid band exactly
-	hero := m.heroWorth(innerW, maxLines)
-	if !hero {
+	if !wide {
+		// compact context line: clock and busiest single core (the value
+		// and temperature live on the border line)
+		var head string
+		// gopsutil reports garbage sub-100MHz clocks on Apple Silicon; a real
+		// core never idles below ~800MHz, so hide anything under 200.
+		if c.FreqMHz >= 200 { //nolint:mnd // plausibility floor
+			head = fmt.Sprintf("%.1fGHz", c.FreqMHz/1000)
+		}
+		if len(c.Cores) > 0 {
+			mx := c.Cores[0]
+			for _, v := range c.Cores[1:] {
+				mx = max(mx, v)
+			}
+			if head != "" {
+				head += "  ·  "
+			}
+			head += fmt.Sprintf("max %.0f%%", mx)
+		}
+		if head != "" {
+			lines = append(lines, m.th.Styles.Muted.Render(head))
+		}
 		if sl := m.sensorsLine(innerW); sl != "" {
 			lines = append(lines, sl)
 		}
 	}
+
 	if innerW > 20 { // full-width gradient meter, btop-style
-		lines = append(lines, canvas.GradientBar(innerW, c.Percent/100, m.cpuRamp, m.th.Styles.Muted))
+		lines = append(lines, canvas.GradientBar(innerW, c.Percent/100, m.th.Ramps.CPU, m.th.Styles.Track))
 	}
 
-	graph := strings.Split(m.cpuGraph.View(), "\n")
-	if hero {
-		// big digits left, graph right: the headline moment of the tab.
-		// The graph is sized to the hero height in this mode, so the
-		// two blocks share every row — tops and bottoms aligned.
-		big := canvas.BigNumber(int(c.Percent+0.5), m.cpuRamp)
-		gap := strings.Repeat(" ", 2)
-		rows := make([]string, len(big))
-		for i := range big {
-			g := ""
-			if i < len(graph) {
-				g = graph[i]
-			}
-			rows[i] = big[i] + gap + g
-		}
-		lines = append(lines, rows...)
-	} else {
-		lines = append(lines, graph...)
-	}
-
+	lines = append(lines, strings.Split(m.cpuGraph.View(), "\n")...)
 	graphH := len(lines)
-	if m.density < densityCompact {
+
+	if wide {
+		if grid := m.coreGraphGrid(innerW, maxLines-graphH); grid != "" {
+			lines = append(lines, strings.Split(grid, "\n")...)
+		}
+	} else if m.density < densityCompact {
 		if coreLines := m.perCoreView(innerW, maxLines-graphH); coreLines != "" {
 			lines = append(lines, strings.Split(coreLines, "\n")...)
 		}
@@ -165,11 +156,65 @@ func (m *Model) cpuView(innerW, maxLines int) []string {
 	return lines
 }
 
-// heroWorth reports whether the panel is wide and tall enough for the
-// big-digit hero composition. This must stay in sync with SetSize,
-// which sizes the cpu graph to the hero height for the same condition.
+// heroWorth reports whether the CPU panel gets the wide treatment:
+// full-width total graph plus the per-core graph grid. This must stay in
+// sync with SetSize, which sizes the total graph to the full panel under
+// the same condition.
 func (m *Model) heroWorth(innerW, maxLines int) bool {
 	return m.density == densityFull && m.class() == layoutGrid && innerW >= 56
+}
+
+// coreGraphGrid renders the per-core rolling graphs as rows of cells —
+// the btop look that keeps the wide CPU panel alive even at idle: label
+// and value ride above each core's own two-row history. maxRows bounds
+// the output in whole cell rows.
+func (m *Model) coreGraphGrid(innerW, maxRows int) string {
+	cores := m.snap.CPU.Cores
+	if len(cores) == 0 || maxRows < 3 {
+		return ""
+	}
+	graphW := m.coreGraphW(innerW)
+	cellsPerRow := clampInt(innerW/(graphW+7), 1, 8)
+	cellRows := maxRows / 3
+
+	shown := min(len(cores), cellsPerRow*cellRows)
+	out := make([]string, 0, cellRows*3)
+	for r := 0; r*cellsPerRow < shown; r++ {
+		cells := make([]string, 0, cellsPerRow*2)
+		for c := 0; c < cellsPerRow; c++ {
+			i := r*cellsPerRow + c
+			if i >= shown {
+				break
+			}
+			if c > 0 {
+				cells = append(cells, "  ")
+			}
+			// label tinted by the core's own heat: a quick glance shows
+			// which cores are busy even when their graphs are flat idle
+			label := m.th.Ramps.CPU.StyleAt(clamp01(cores[i] / 100)).Render(fmt.Sprintf("c%-2d", i))
+			val := m.th.Styles.Muted.Render(fmt.Sprintf("%3.0f%%", cores[i]))
+			block := label + " " + val + "\n" + m.coreGraphs[i].View()
+			cells = append(cells, block)
+		}
+		out = append(out, lipgloss.JoinHorizontal(lipgloss.Top, cells...))
+	}
+	if hidden := len(cores) - shown; hidden > 0 && len(out) < maxRows {
+		out = append(out, m.th.Styles.Muted.Render(fmt.Sprintf("… +%d more cores", hidden)))
+	}
+	return strings.Join(out, "\n")
+}
+
+// heroCard lifts the big digits onto a softly tinted plate with one
+// column of air from the panel border — the digits only appear in the
+// narrow MEMORY panel, where they own half the width.
+func (m *Model) heroCard(digits []string) []string {
+	plate := lipgloss.NewStyle().Background(
+		lipgloss.Color(canvas.Ramp{m.th.Palette.BG, m.th.Palette.FG}.At(0.07)))
+	out := make([]string, len(digits))
+	for i, l := range digits {
+		out[i] = plate.Render(" ") + plate.Render(l)
+	}
+	return out
 }
 
 // perCoreView renders mini bars, up to perRow per line, bounded by
@@ -213,15 +258,16 @@ func (m *Model) perCoreView(innerW, maxRows int) string {
 }
 
 func (m *Model) coreBar(i int, pct float64, barW int) string {
-	label := m.th.Styles.Muted.Render(fmt.Sprintf("c%-2d", i))
-	bar := canvas.GradientBar(barW, pct/100, m.cpuRamp, m.th.Styles.Muted)
+	// heat-tinted label, matching the wide panel's per-core grid
+	label := m.th.Ramps.CPU.StyleAt(clamp01(pct / 100)).Render(fmt.Sprintf("c%-2d", i))
+	bar := canvas.GradientBar(barW, pct/100, m.th.Ramps.CPU, m.th.Styles.Track)
 	val := m.th.Styles.Muted.Render(fmt.Sprintf("%4.0f%%", pct))
 	return label + bar + val
 }
 
 // memView renders gradient meters for RAM, swap and zram — with a
-// big-digit hero on wide panels; the history graphs trail so they are
-// the first thing dropped on short screens. Meters span the panel:
+// big-digit hero card on wide panels; the history graphs trail so they
+// are the first thing dropped on short screens. Meters span the panel:
 // the old fixed 28-cell cap left them short while CPU ran full width.
 func (m *Model) memView(innerW int) []string {
 	mem := m.snap.Mem
@@ -230,7 +276,7 @@ func (m *Model) memView(innerW int) []string {
 	heroW := 0
 	var big []string
 	if heroMode {
-		big = canvas.BigNumber(int(mem.Percent+0.5), m.memRamp)
+		big = m.heroCard(canvas.BigNumber(int(mem.Percent+0.5), m.th.Ramps.Mem))
 		heroW = lipgloss.Width(big[0]) + 2
 	}
 	rightW := max(10, innerW-heroW)
@@ -260,14 +306,14 @@ func (m *Model) memView(innerW int) []string {
 
 	right := []string{
 		ramLine,
-		canvas.GradientBar(barW, mem.Percent/100, m.memRamp, m.th.Styles.Muted),
+		canvas.GradientBar(barW, mem.Percent/100, m.th.Ramps.Mem, m.th.Styles.Track),
 	}
 
 	if mem.SwapTotal > 0 {
 		right = append(right,
 			m.valuePct(mem.SwapPercent, m.cfg.Thresholds.MemWarn, m.cfg.Thresholds.MemCrit)+
 				m.th.Styles.Muted.Render(" ")+key("SWAP", pair(mem.SwapUsed, mem.SwapTotal, rightW-11)),
-			canvas.GradientBar(barW, mem.SwapPercent/100, m.memRamp, m.th.Styles.Muted),
+			canvas.GradientBar(barW, mem.SwapPercent/100, m.th.Ramps.Swap, m.th.Styles.Track),
 		)
 	} else {
 		right = append(right, m.th.Styles.Muted.Render("SWAP —"))
@@ -278,7 +324,7 @@ func (m *Model) memView(innerW int) []string {
 		right = append(right,
 			m.valuePct(pct, m.cfg.Thresholds.MemWarn, m.cfg.Thresholds.MemCrit)+
 				m.th.Styles.Muted.Render(" ")+key("ZRAM", pair(mem.ZramUsed, mem.ZramTotal, rightW-11)),
-			canvas.GradientBar(barW, pct/100, m.ioRamp, m.th.Styles.Muted),
+			canvas.GradientBar(barW, pct/100, m.th.Ramps.IO, m.th.Styles.Track),
 		)
 	}
 
@@ -314,15 +360,17 @@ func (m *Model) memView(innerW int) []string {
 	return lines
 }
 
-// netView renders total down/up graphs with their auto-scale ceilings
-// labeled in the top-right corners, plus the busiest interfaces as
-// glances-style mixed meters: one bar, green share = download, blue
-// share = upload, with the total rate alongside.
+// netView renders the total down/up rates, the graphs with their
+// auto-scale ceilings labeled in the top-right corners, plus the busiest
+// interfaces as glances-style mixed meters: one bar, green share =
+// download, blue share = upload, with the total rate alongside. The
+// rates lead in-panel: the narrow NETWORK border has no room for a
+// readout of its own.
 func (m *Model) netView(maxIface int) []string {
 	rx, tx := totalRates(m.snap.Nets)
-	head := m.th.Styles.OK.Render("↓ "+format.Rate(rx)) +
+	head := m.th.Styles.OK.Render("↓ "+shortRate(rx)) +
 		m.th.Styles.Muted.Render("  ") +
-		m.th.Styles.Title.Render("↑ "+format.Rate(tx))
+		m.th.Styles.Title.Render("↑ "+shortRate(tx))
 
 	peak := func(label string, v float64) string {
 		if v <= 0 {
@@ -352,50 +400,50 @@ func (m *Model) netView(maxIface int) []string {
 			style = m.th.Styles.Title // upload-dominated
 		}
 		lines = append(lines, m.th.Styles.Muted.Render(fmt.Sprintf("%-10s", ui.Trunc(n.Name, 10)))+
-			canvas.DualBar(10, share, m.rxRamp, m.txRamp)+" "+style.Render(shortRate(total)))
+			canvas.DualBar(10, share, m.th.Ramps.RX, m.th.Ramps.TX)+" "+style.Render(shortRate(total)))
 	}
 	return lines
 }
 
-// diskView renders an aggregate I/O line — with the busiest device's
-// busy meter when the panel is wide — plus usage bars per mount.
+// diskView renders the busiest device's busy meter when the panel is
+// wide, plus usage bars per mount with their I/O sparklines. The R/W
+// totals live on the border readout.
 func (m *Model) diskView(innerW, maxRows int) []string {
-	var rb, wb float64
-	busyName, busyPct := "", 0.0
-	for _, io := range m.snap.DiskIOs {
-		rb += io.ReadBytes
-		wb += io.WriteBytes
-		if io.BusyPercent > busyPct {
-			busyPct, busyName = io.BusyPercent, io.Name
+	var lines []string
+	if innerW >= 46 {
+		busyName, busyPct := "", 0.0
+		for _, io := range m.snap.DiskIOs {
+			if io.BusyPercent > busyPct {
+				busyPct, busyName = io.BusyPercent, io.Name
+			}
+		}
+		if busyName != "" {
+			busyStyle := m.th.Value(60, 90, busyPct) //nolint:mnd // busy thresholds
+			lines = append(lines,
+				m.th.Styles.Muted.Render(ui.Trunc(busyName, 10)+" ")+
+					busyStyle.Render(canvas.GradientBar(
+						clampInt(innerW-16, 6, 20), busyPct/100, m.th.Ramps.IO, m.th.Styles.Track))+
+					busyStyle.Render(fmt.Sprintf(" %.0f%%", busyPct)))
 		}
 	}
-	head := m.th.Styles.Muted.Render("I/O ") +
-		fmt.Sprintf("R %s · W %s", format.Rate(rb), format.Rate(wb))
-	if busyName != "" && innerW >= 46 {
-		busyStyle := m.th.Value(60, 90, busyPct) //nolint:mnd // busy thresholds
-		head += m.th.Styles.Muted.Render("  ·  ") +
-			m.th.Styles.Muted.Render(ui.Trunc(busyName, 10)+" ") +
-			busyStyle.Render(canvas.GradientBar(
-				clampInt(innerW-46, 6, 20), busyPct/100, m.ioRamp, m.th.Styles.Muted)) +
-			busyStyle.Render(fmt.Sprintf(" %.0f%%", busyPct))
-	}
-	lines := []string{head}
 
 	disks := make([]collector.Disk, len(m.snap.Disks))
 	copy(disks, m.snap.Disks)
 	sort.Slice(disks, func(i, j int) bool { return disks[i].Percent > disks[j].Percent })
 
 	barW := clampInt(innerW-34, 6, 24)
-	for _, d := range disks[:min(len(disks), max(0, maxRows))] {
+	rows := max(0, maxRows-len(lines))
+	shown := min(len(disks), rows)
+	for _, d := range disks[:shown] {
 		mount := mountLabel(d.Mountpoint)
 		name := m.th.Styles.Muted.Render(fmt.Sprintf("%-10s", ui.Trunc(mount, 10)))
-		bar := canvas.GradientBar(barW, d.Percent/100, m.memRamp, m.th.Styles.Muted)
-		spark := canvas.SparklineScaled(m.ioHist[filepath.Base(d.Device)], m.ioRamp)
+		bar := canvas.GradientBar(barW, d.Percent/100, m.th.Ramps.Mem, m.th.Styles.Track)
+		spark := canvas.SparklineScaled(m.ioHist[filepath.Base(d.Device)], m.th.Ramps.IO)
 		pct := m.valuePct(d.Percent, m.cfg.Thresholds.MemWarn, m.cfg.Thresholds.MemCrit)
 		lines = append(lines, name+bar+pct+spark)
 	}
-	if len(disks) > maxRows {
-		lines = append(lines, m.th.Styles.Muted.Render(fmt.Sprintf("… +%d more", len(disks)-maxRows)))
+	if len(disks) > rows {
+		lines = append(lines, m.th.Styles.Muted.Render(fmt.Sprintf("… +%d more", len(disks)-rows)))
 	}
 	return lines
 }
@@ -410,7 +458,8 @@ func mountLabel(mountpoint string) string {
 }
 
 // procView renders the busiest processes, CPU first, under a column
-// header. maxRows bounds the total lines; a summary line always leads.
+// header. maxRows bounds the total lines; the count lives on the
+// border readout.
 func (m *Model) procView(innerW, maxRows int) []string {
 	procs := make([]collector.Proc, len(m.snap.Procs))
 	copy(procs, m.snap.Procs)
@@ -421,20 +470,16 @@ func (m *Model) procView(innerW, maxRows int) []string {
 		return procs[i].Mem > procs[j].Mem // tiebreak: memory
 	})
 
-	summary := m.th.Styles.Muted.Render(fmt.Sprintf("%d procs · sorted by cpu · top %d",
-		len(procs), min(len(procs), max(0, maxRows-2))))
-	lines := []string{summary}
-
-	if maxRows > 1 && len(procs) > 0 {
+	var lines []string
+	if maxRows > 0 && len(procs) > 0 {
 		lines = append(lines, m.th.Styles.Muted.Render(
 			fmt.Sprintf("%7s %-9s %5s %5s %8s  %s", "", "USER", "MEM%", "CPU%", "RSS", "NAME")))
 	}
 
 	nameW := max(10, innerW-38)
-	for _, p := range procs[:min(len(procs), max(0, maxRows-2))] {
+	for _, p := range procs[:min(len(procs), max(0, maxRows-1))] {
 		// CPU colored along the value ramp instead of three flat states
-		cpuColor := lipgloss.Color(m.cpuRamp.At(min(p.CPU, 100) / 100))
-		cpuStyle := lipgloss.NewStyle().Foreground(cpuColor)
+		cpuStyle := m.th.Ramps.CPU.StyleAt(min(p.CPU, 100) / 100)
 		lines = append(lines,
 			m.th.Styles.Muted.Render(fmt.Sprintf("%7d ", p.PID))+
 				fmt.Sprintf("%-9s", ui.Trunc(p.User, 9))+
@@ -504,8 +549,8 @@ func EvaluateAlerts(cfg *config.Config, snap collector.Snapshot) []Alert {
 
 // sensorsLine renders every reported temperature on one line, hottest
 // first, each value threshold-colored. The hottest reading already shows
-// in the panel head and the host panel, so the line only appears when a
-// second sensor exists. Width-bounded to the panel.
+// on the border readout, so the line only appears when a second sensor
+// exists. Width-bounded to the panel.
 func (m *Model) sensorsLine(maxW int) string {
 	if len(m.snap.Sensors) < 2 {
 		return ""
@@ -555,27 +600,24 @@ func (m *Model) restSensors() []collector.Sensor {
 }
 
 // gpuLines renders one line per adapter: name, utilization bar, VRAM
-// (with a meter on wide panels) and temperature. Single-adapter setups
-// skip the head line so the adapter gets the full row budget.
+// (with a meter on wide panels) and temperature. The adapter count and
+// name live on the border readout.
 func (m *Model) gpuLines(innerW, maxLines int) []string {
 	gpus := m.snap.GPUs
 	if len(gpus) == 0 || maxLines < 1 {
 		return nil
 	}
 	var lines []string
-	if len(gpus) > 1 && maxLines > len(gpus) {
-		lines = append(lines, m.th.Styles.Muted.Render(fmt.Sprintf("%d adapters", len(gpus))))
-	}
-	shown := min(len(gpus), max(0, maxLines-len(lines)))
+	shown := min(len(gpus), maxLines)
 	nameW := clampInt(innerW-34, 12, 44)
 	for _, g := range gpus[:shown] {
 		barW := clampInt(innerW-42, 8, 22)
-		bar := canvas.GradientBar(barW, clamp01(g.Util/100), m.cpuRamp, m.th.Styles.Muted)
+		bar := canvas.GradientBar(barW, clamp01(g.Util/100), m.th.Ramps.CPU, m.th.Styles.Track)
 		mem := ""
 		if g.MemTotal > 0 {
 			if innerW >= 64 {
 				vram := clamp01(float64(g.MemUsed) / float64(g.MemTotal))
-				mem = " " + canvas.GradientBar(8, vram, m.memRamp, m.th.Styles.Muted)
+				mem = " " + canvas.GradientBar(8, vram, m.th.Ramps.Mem, m.th.Styles.Track)
 			}
 			mem += fmt.Sprintf(" %s/%s", format.BytesCompact(g.MemUsed), format.BytesCompact(g.MemTotal))
 		}
@@ -586,6 +628,57 @@ func (m *Model) gpuLines(innerW, maxLines int) []string {
 				ui.Trunc(g.Name, nameW)+" "+bar+fmt.Sprintf("%4.0f%%", g.Util)+mem+" "+temp)
 	}
 	return lines
+}
+
+// Border readouts: title left, live value right — the btop panel
+// signature. Values are pre-styled strings spliced into the border.
+
+func (m *Model) hostRight() string {
+	return m.th.Styles.Muted.Render("up ") + m.th.Styles.FG.Render(format.Uptime(m.snap.Host.Uptime))
+}
+
+func (m *Model) cpuRight() string {
+	c := m.snap.CPU
+	parts := []string{m.valuePct(c.Percent, m.cfg.Thresholds.CPUWarn, m.cfg.Thresholds.CPUCrit)}
+	if s := m.hotSensor(); s != nil {
+		st := m.th.Value(m.cfg.Thresholds.TempWarn, m.cfg.Thresholds.TempCrit, s.TempC)
+		parts = append(parts, st.Render(fmt.Sprintf("%.0f°C", s.TempC)))
+	}
+	return strings.Join(parts, m.th.Styles.Muted.Render(" · "))
+}
+
+func (m *Model) memRight() string {
+	mem := m.snap.Mem
+	// the hero digits carry the percentage, so the border shows the
+	// used/total pair in its compact form
+	pair := fmt.Sprintf("%s/%s", format.BytesCompact(mem.Used), format.BytesCompact(mem.Total))
+	return m.th.Styles.FG.Render(pair)
+}
+
+func (m *Model) diskRight() string {
+	var rb, wb float64
+	for _, io := range m.snap.DiskIOs {
+		rb += io.ReadBytes
+		wb += io.WriteBytes
+	}
+	return m.th.Styles.Muted.Render("R ") + m.th.Styles.FG.Render(format.RateFixed(10, rb)) +
+		m.th.Styles.Muted.Render(" · W ") + m.th.Styles.FG.Render(format.RateFixed(10, wb))
+}
+
+func (m *Model) gpuRight() string {
+	gpus := m.snap.GPUs
+	switch len(gpus) {
+	case 0:
+		return ""
+	case 1:
+		return m.th.Styles.FG.Render(ui.Trunc(gpus[0].Name, 28))
+	default:
+		return m.th.Styles.Muted.Render(fmt.Sprintf("%d adapters", len(gpus)))
+	}
+}
+
+func (m *Model) procRight() string {
+	return m.th.Styles.FG.Render(fmt.Sprintf("%d procs", len(m.snap.Procs)))
 }
 
 // hottestSensor returns the hottest sensor of a snapshot (the list is

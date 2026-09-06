@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/wrongstack/wrongtop/internal/collector"
 	"github.com/shirou/gopsutil/v4/process"
+	"github.com/wrongstack/wrongtop/internal/collector"
 )
 
 // SortKey selects the process table ordering.

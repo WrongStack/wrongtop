@@ -34,7 +34,7 @@ type Palette struct {
 
 // Built-in palettes.
 var (
-	// GruvboxDark is the default wrongtop palette.
+	// GruvboxDark seeds the unset slots of user-defined palettes.
 	GruvboxDark = Palette{
 		Name:   "gruvbox-dark",
 		BG:     "#282828",
@@ -70,7 +70,9 @@ var (
 		Red:    "#ff5555",
 		Green:  "#50fa7b",
 		Yellow: "#f1fa8c",
-		Blue:   "#8be9fd",
+		// the dracula spec has no blue between cyan and purple; the magenta
+		// accent (#ff79c6) fills the slot so panel borders stay distinct
+		Blue:   "#ff79c6",
 		Purple: "#bd93f9",
 		Cyan:   "#8be9fd",
 		Orange: "#ffb86c",
@@ -143,7 +145,9 @@ var (
 		Blue:   "#9ccfd8",
 		Purple: "#c4a7e7",
 		Cyan:   "#ebbcba",
-		Orange: "#ebbcba",
+		// the base rose-pine accents run out after cyan, so the orange
+		// slot borrows dawn's rose (#d7827e) to stay distinct from cyan
+		Orange: "#d7827e",
 		Gray:   "#6e6a86",
 	}
 
@@ -316,11 +320,12 @@ func Resolve(name string) (Palette, bool) {
 	return p, ok
 }
 
-// ByName resolves a theme by name, falling back to the default.
+// ByName resolves a theme by name, falling back to the default
+// (tokyo-night, matching config.Default).
 func ByName(name string) *Theme {
 	p, ok := Resolve(name)
 	if !ok {
-		p = GruvboxDark
+		p = TokyoNight
 	}
 	return New(p)
 }
@@ -336,26 +341,41 @@ func (t *Theme) Soft(hex string) string {
 type Theme struct {
 	Palette Palette
 	Styles  Styles
+	Ramps   Ramps
 }
 
 // Styles are the shared lipgloss styles derived from a palette.
 type Styles struct {
-	TabBar       lipgloss.Style
-	TabActive    lipgloss.Style
-	TabInactive  lipgloss.Style
-	Status       lipgloss.Style
-	Title        lipgloss.Style
-	HelpKey      lipgloss.Style
-	HelpText     lipgloss.Style
-	OK           lipgloss.Style
-	Warn         lipgloss.Style
-	Crit         lipgloss.Style
-	Muted        lipgloss.Style
-	Border       lipgloss.Style
-	BorderChar   lipgloss.Style
-	BorderTitle  lipgloss.Style
-	Placeholder  lipgloss.Style
-	PlaceholderN lipgloss.Style
+	TabBar      lipgloss.Style
+	TabActive   lipgloss.Style
+	TabInactive lipgloss.Style
+	Status      lipgloss.Style
+	Title       lipgloss.Style
+	FG          lipgloss.Style // plain readable text: never left to the terminal default
+	HelpKey     lipgloss.Style
+	HelpText    lipgloss.Style
+	OK          lipgloss.Style
+	Warn        lipgloss.Style
+	Crit        lipgloss.Style
+	Muted       lipgloss.Style
+	Track       lipgloss.Style // the empty run of a meter: fainter than Muted text
+	Border      lipgloss.Style
+	BorderChar  lipgloss.Style
+	BorderTitle lipgloss.Style
+	Selected    lipgloss.Style // focused row of the data tables
+}
+
+// Ramps groups the value→color gradients shared by every tab, derived
+// from the palette so a metric reads the same wherever it appears.
+type Ramps struct {
+	CPU  canvas.Ramp // utilization, low → high: green → yellow → orange → red
+	Mem  canvas.Ramp // memory pressure: blue → purple → red
+	Swap canvas.Ramp // swap usage: purple → red
+	IO   canvas.Ramp // disk activity: cyan → green → yellow → red
+	Bat  canvas.Ramp // battery, empty → full: red → orange → green
+	Load canvas.Ramp // load average: cyan → green
+	RX   canvas.Ramp // download share of the mixed meters: green → cyan
+	TX   canvas.Ramp // upload share of the mixed meters: blue → cyan
 }
 
 // New derives a full theme from a palette.
@@ -380,6 +400,8 @@ func New(p Palette) *Theme {
 		Title: lipgloss.NewStyle().
 			Foreground(c(p.Purple)).
 			Bold(true),
+		FG: lipgloss.NewStyle().
+			Foreground(c(p.FG)),
 		HelpKey: lipgloss.NewStyle().
 			Foreground(c(p.Cyan)),
 		HelpText: lipgloss.NewStyle().
@@ -388,6 +410,8 @@ func New(p Palette) *Theme {
 		Warn:  lipgloss.NewStyle().Foreground(c(p.Yellow)),
 		Crit:  lipgloss.NewStyle().Foreground(c(p.Red)).Bold(true),
 		Muted: lipgloss.NewStyle().Foreground(c(p.Gray)),
+		Track: lipgloss.NewStyle().
+			Foreground(c(canvas.Ramp{p.BG, p.Gray}.At(0.45))),
 		Border: lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(c(p.Blue)),
@@ -396,13 +420,22 @@ func New(p Palette) *Theme {
 		BorderTitle: lipgloss.NewStyle().
 			Foreground(c(p.Blue)).
 			Bold(true),
-		Placeholder: lipgloss.NewStyle().
+		Selected: lipgloss.NewStyle().
+			Background(c(canvas.Ramp{p.BG, p.Purple}.At(0.30))).
 			Foreground(c(p.FG)).
 			Bold(true),
-		PlaceholderN: lipgloss.NewStyle().
-			Foreground(c(p.Gray)),
 	}
-	return &Theme{Palette: p, Styles: s}
+	r := Ramps{
+		CPU:  canvas.Ramp{p.Green, p.Yellow, p.Orange, p.Red},
+		Mem:  canvas.Ramp{p.Blue, p.Purple, p.Red},
+		Swap: canvas.Ramp{p.Purple, p.Red},
+		IO:   canvas.Ramp{p.Cyan, p.Green, p.Yellow, p.Red},
+		Bat:  canvas.Ramp{p.Red, p.Orange, p.Green},
+		Load: canvas.Ramp{p.Cyan, p.Green},
+		RX:   canvas.Ramp{p.Green, p.Cyan},
+		TX:   canvas.Ramp{p.Blue, p.Cyan},
+	}
+	return &Theme{Palette: p, Styles: s, Ramps: r}
 }
 
 // Value colors a percentage according to the configured thresholds.

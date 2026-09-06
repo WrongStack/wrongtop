@@ -9,14 +9,16 @@
 - **Dashboard panels** — host (OS, kernel, uptime, load average, logged-in users, temperatures, battery, fan speeds), total CPU with a scrolling braille graph, per-core usage bars and frequency, RAM/swap/zram bars with history, network down/up graphs with **auto-scale ceilings labeled in the corners** and glances-style **mixed meters** per interface (green share = download, blue share = upload), per-mount usage bars with aggregate I/O rates, and a top-process panel
 - **Sensors** — CPU temperatures and fan RPMs on every platform it can get them: on macOS (arm64) WrongTop reads the AppleSMC directly via IOKit — real P-core temperatures that neither btop nor glances show on a Mac — plus battery state through IOPowerSources; Linux uses hwmon; Windows tries ACPI thermal zones and WMI
 - **GPU monitoring** — utilization, VRAM and temperature through NVIDIA's NVML driver library, loaded at runtime (no cgo, no helper process); the panel appears only when a GPU exists
-- **Alerts with history** (glances-style): active warnings surface as chips on the **tab bar's right zone** — visible on every tab, never reflowing the grid — and `a` (or clicking the zone) opens a timestamped session history with severities and durations
+- **Alerts with history** (glances-style): active warnings surface as chips on the **tab bar's right zone** — visible on every tab, never reflowing the grid; critical chips **pulse** and long events carry their **duration** — and `a` (or clicking the zone) opens a timestamped session history with severities and durations
 - **Live status bar** — threshold-colored cpu/mem chips, network throughput, temperature and battery at the bottom, btop-style; chips and hints degrade gracefully on narrow terminals so the line never wraps
 - **Process table** — sortable, live-filterable list with PID, name, CPU%, MEM%, RSS, user, thread count, nice value and htop-style state letter; **tree view** with collapse/expand; a full **signal menu** (TERM, KILL, INT, HUP, QUIT, STOP, CONT); per-process **detail box** with the full command line
-- **Docker** — container list with live CPU, memory, **network and block I/O rates** (computed from the lifetime counters), start / stop / restart; follow-mode log viewer with scrollback and severity coloring. The daemon is optional: the tab shows a notice and retries until it appears
-- **Disks** — filesystem usage bars plus per-device read/write rates, IOPS and busy time
-- **Network** — per-interface throughput and totals, sorted by current activity
+- **Docker** — container list with live CPU, memory, **network and block I/O rates** (computed from the lifetime counters), a CPU **ACTIVITY meter column**, health-aware status coloring, start / stop / restart; follow-mode log viewer with scrollback and severity coloring. The daemon is optional: the tab shows a notice and retries until it appears
+- **Disks** — filesystem usage bars plus per-device read/write rates, IOPS, busy time and an **ACTIVITY sparkline** per device
+- **Network** — per-interface throughput and totals, sorted by current activity, with **per-interface ACTIVITY sparklines** and a DROP/s column
+- **Sensors tab** — one panel per hardware group: **rolling temperature graphs** per sensor, fan speeds with activity sparklines, and battery state with charge history
+- **Connections tab** — the live TCP table sorted traffic-first (established, then listeners), per-state coloring, and **process names resolved from the process table** where the platform allows (macOS does; Linux reads the kernel tables without the expensive PID scan)
 - **Themes** — ten built-in palettes (`tokyo-night` is the default, `everforest-dark` and `kanagawa` among them) plus **user-defined theme files** loaded from `~/.config/wrongtop/themes/*.yml`; `T` cycles themes live without losing state
-- **Soft modern UI** — chips, active tabs and alert chips blend their background toward the palette, panel titles carry icons, `nerd_fonts: true` upgrades the status bar and tabs to powerline separators, and `border: rounded | square` switches the panel corners btop-style
+- **Soft modern UI** — chips, active tabs and alert chips blend their background toward the palette, every panel carries a **border readout** (title with icon on the left, the live value flush right — uptime on HOST, `45.2% · 55°C` on CPU, `R/W` rates on DISKS…), `nerd_fonts: true` swaps the glyphs for nerd-font icons and powerline separators, and `border: rounded | square | thick | double` switches the panel corners btop-style
 - **Live config** — `R` hot-reloads the YAML (theme, refresh, thresholds, layout, key bindings); `p` cycles dashboard density presets
 - **Remote monitoring** — `wrongtop serve` streams snapshots to `wrongtop connect` clients over a token-authenticated, read-only protocol; `wrongtop dump` prints JSON lines for scripts
 - **Zero-config** — runs fine without a config file; YAML overrides are optional
@@ -133,12 +135,14 @@ WrongTop works with no configuration. To customize, run `wrongtop config-sample`
 theme: tokyo-night       # 10 built-ins, or a file in ~/.config/wrongtop/themes
 refresh: 1s               # sample interval, clamped to 250ms–10s
 layout: full              # full | compact | minimal (p cycles it live)
-nerd_fonts: false         # true: powerline separators in the status bar and tabs
-border: rounded           # rounded | square panel corners (btop-style toggle)
+nerd_fonts: false         # true: icon glyphs + powerline separators in tabs, panels and the status bar
+border: rounded           # rounded | square | thick | double panel corners
 
 modules:                  # optional tabs
   processes: true         # show the process table
   docker: true            # show the Docker tab
+  sensors: true           # show the SENSORS tab (temps, fans, battery)
+  connections: true       # show the CONNECTIONS tab (live TCP table)
 
 thresholds:               # percent where values turn warning / critical
   cpu_warn: 70

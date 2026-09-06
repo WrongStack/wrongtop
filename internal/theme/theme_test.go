@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/wrongstack/wrongtop/internal/ui/canvas"
 )
 
 func TestResolveBuiltins(t *testing.T) {
@@ -16,8 +18,48 @@ func TestResolveBuiltins(t *testing.T) {
 	if _, ok := Resolve("no-such-theme"); ok {
 		t.Error("unknown theme should not resolve")
 	}
-	if got := ByName("no-such-theme").Palette.Name; got != GruvboxDark.Name {
-		t.Errorf("ByName fallback = %q, want %q", got, GruvboxDark.Name)
+	if got := ByName("no-such-theme").Palette.Name; got != TokyoNight.Name {
+		t.Errorf("ByName fallback = %q, want %q", got, TokyoNight.Name)
+	}
+}
+
+// TestRampsCoverAllRoles pins the shared value gradients: every role is
+// populated after New so tabs never fall back to ad-hoc ramps.
+func TestRampsCoverAllRoles(t *testing.T) {
+	th := ByName("tokyo-night")
+	for name, r := range map[string]canvas.Ramp{
+		"cpu":  th.Ramps.CPU,
+		"mem":  th.Ramps.Mem,
+		"swap": th.Ramps.Swap,
+		"io":   th.Ramps.IO,
+		"bat":  th.Ramps.Bat,
+		"load": th.Ramps.Load,
+		"rx":   th.Ramps.RX,
+		"tx":   th.Ramps.TX,
+	} {
+		if len(r) < 2 {
+			t.Errorf("ramp %q too short: %v", name, r)
+			continue
+		}
+		for _, hex := range r {
+			if len(hex) != 7 || hex[0] != '#' {
+				t.Errorf("ramp %q has malformed color %q", name, hex)
+			}
+		}
+	}
+}
+
+// TestNoDuplicateAccents guards the palette quirks where two roles
+// shared one hex: adjacent panels (HOST blue vs NETWORK cyan) rendered
+// identical borders.
+func TestNoDuplicateAccents(t *testing.T) {
+	for _, p := range []Palette{Dracula, RosePine, TokyoNight, GruvboxDark} {
+		if p.Blue == p.Cyan {
+			t.Errorf("%s: blue and cyan share %s", p.Name, p.Blue)
+		}
+		if p.Cyan == p.Orange {
+			t.Errorf("%s: cyan and orange share %s", p.Name, p.Cyan)
+		}
 	}
 }
 

@@ -56,6 +56,12 @@ type Collector struct {
 	cachedSensors []Sensor
 	cachedFans    []Fan
 	cachedBattery *Battery
+	cachedUsers   int // logged-in sessions; parsed from utmpx on the slow path
+
+	connMu       sync.Mutex
+	connInterval time.Duration
+	lastConn     time.Time
+	cachedConns  []Conn
 
 	gpuMu      sync.Mutex
 	lastGPU    time.Time
@@ -69,6 +75,9 @@ func New(refresh time.Duration) *Collector {
 	return &Collector{
 		slowInterval: max(5*time.Second, refresh*5),
 		gpuInterval:  max(2*time.Second, refresh*2),
+		// the socket table costs a sysctl-level sweep (~40ms on darwin);
+		// five seconds is plenty fresh for a human-readable table
+		connInterval: max(5*time.Second, refresh*5),
 	}
 }
 
@@ -104,6 +113,7 @@ func (c *Collector) Collect(ctx context.Context) Snapshot {
 		Disks:   c.collectDisks(ctx),
 		DiskIOs: c.collectDiskIO(ctx, elapsed),
 		Nets:    c.collectNet(ctx, elapsed),
+		Conns:   c.collectConns(ctx, now),
 	}
 }
 
@@ -123,6 +133,7 @@ func (c *Collector) collectSlow(ctx context.Context, now time.Time) (float64, []
 		c.cachedSensors = collectSensors(ctx)
 		c.cachedFans = readFans()
 		c.cachedBattery = readBattery(ctx)
+		c.cachedUsers = countUsers()
 	}
 	return c.cachedFreq, c.cachedSensors, c.cachedFans, c.cachedBattery
 }
@@ -157,7 +168,7 @@ func (c *Collector) collectHost(ctx context.Context) Host {
 	if avg, err := load.AvgWithContext(ctx); err == nil {
 		h.Load = [3]float64{avg.Load1, avg.Load5, avg.Load15}
 	}
-	h.Users = countUsers()
+	h.Users = c.cachedUsers // utmpx parse rides the slow cadence
 	return h
 }
 
@@ -272,7 +283,12 @@ func (c *Collector) collectProcs(ctx context.Context, elapsed float64, memTotal 
 		c.users = make(map[int32]string)
 	}
 
-	procs, err := process.ProcessesWithContext(ctx)
+	// Pids + bare Process structs — deliberately NOT
+	// process.ProcessesWithContext: it wraps every pid in
+	// NewProcessWithContext, which eagerly probes CreateTime per process
+	// (a proc_pidinfo sweep that alone was ~47% of Collect) for a field
+	// wrongtop never reads.
+	pids, err := process.PidsWithContext(ctx)
 	if err != nil {
 		return nil
 	}
@@ -283,12 +299,13 @@ func (c *Collector) collectProcs(ctx context.Context, elapsed float64, memTotal 
 	sys, _ := readProcSys()
 	usage, _ := readAllProcUsage()
 
-	next := make(map[int32]float64, len(procs))
-	out := make([]Proc, 0, len(procs))
-	for _, p := range procs {
+	next := make(map[int32]float64, len(pids))
+	out := make([]Proc, 0, len(pids))
+	for _, pid := range pids {
+		p := &process.Process{Pid: pid}
 		var pr Proc
-		pr.PID = p.Pid
-		s, hasSys := sys[p.Pid]
+		pr.PID = pid
+		s, hasSys := sys[pid]
 		if hasSys {
 			pr.State = s.State
 			pr.PPID = s.PPID
@@ -309,7 +326,7 @@ func (c *Collector) collectProcs(ctx context.Context, elapsed float64, memTotal 
 			}
 		}
 
-		if u, has := usage[p.Pid]; has {
+		if u, has := usage[pid]; has {
 			// libproc fast path for the unit-free metrics: name, RSS,
 			// threads (CPU time stays on gopsutil Times below — the
 			// rusage_info time fields are undocumented scheduler ticks)
@@ -322,10 +339,10 @@ func (c *Collector) collectProcs(ctx context.Context, elapsed float64, memTotal 
 		}
 		if t, err := p.TimesWithContext(ctx); err == nil {
 			total := t.User + t.System
-			if prev, ok := c.lastCPU[p.Pid]; ok && elapsed > 0 {
+			if prev, ok := c.lastCPU[pid]; ok && elapsed > 0 {
 				pr.CPU = max(0, (total-prev)/elapsed*100)
 			}
-			next[p.Pid] = total
+			next[pid] = total
 		}
 		if usage == nil {
 			// gopsutil fallbacks for the fast-path metrics
@@ -482,6 +499,8 @@ func (c *Collector) collectNet(ctx context.Context, elapsed float64) []NetIface 
 			TxRate:        max(0, float64(int64(cur.BytesSent)-int64(p.BytesSent))/elapsed),
 			RxRatePackets: max(0, float64(int64(cur.PacketsRecv)-int64(p.PacketsRecv))/elapsed),
 			TxRatePackets: max(0, float64(int64(cur.PacketsSent)-int64(p.PacketsSent))/elapsed),
+			RxDrop:        max(0, float64(int64(cur.Dropin)-int64(p.Dropin))/elapsed),
+			TxDrop:        max(0, float64(int64(cur.Dropout)-int64(p.Dropout))/elapsed),
 			RxTotal:       cur.BytesRecv,
 			TxTotal:       cur.BytesSent,
 		}
@@ -490,6 +509,93 @@ func (c *Collector) collectNet(ctx context.Context, elapsed float64) []NetIface 
 		}
 	}
 	return out
+}
+
+// connCap bounds the connections table pushed into snapshots; the raw
+// socket table can run to thousands of rows on busy servers.
+const connCap = 300
+
+// connRank orders connections for display: live traffic first, then
+// listeners, then the tail of half-open and closing states. Unknown
+// states sink to the tail with the rest.
+func connRank(state string) int {
+	switch state {
+	case "ESTABLISHED":
+		return 0
+	case "SYN_SENT", "SYN_RECV":
+		return 1
+	case "LISTEN":
+		return 2
+	default:
+		return 3
+	}
+}
+
+// collectConns returns the TCP table, cached on its own cadence: the
+// socket table costs a sysctl (~40ms on darwin), fine every couple of
+// seconds, too dear for every refresh tick. PIDs ride along when the
+// platform resolves them without privileges (darwin does; linux
+// deliberately doesn't — the /proc scan would dominate collection).
+func (c *Collector) collectConns(ctx context.Context, now time.Time) []Conn {
+	c.connMu.Lock()
+	defer c.connMu.Unlock()
+
+	interval := c.connInterval
+	if interval <= 0 {
+		interval = 5 * time.Second
+	}
+	if c.lastConn.IsZero() || now.Sub(c.lastConn) >= interval {
+		c.lastConn = now
+		c.cachedConns = sampleConns(ctx)
+	}
+	return c.cachedConns
+}
+
+func sampleConns(ctx context.Context) []Conn {
+	cons, err := net.ConnectionsWithContext(ctx, "tcp")
+	if err != nil {
+		return nil
+	}
+	out := make([]Conn, 0, len(cons))
+	for _, cn := range cons {
+		out = append(out, Conn{
+			Local:  connAddr(cn.Laddr.IP, cn.Laddr.Port),
+			Remote: connAddr(cn.Raddr.IP, cn.Raddr.Port),
+			State:  cn.Status,
+			PID:    cn.Pid,
+		})
+	}
+	sortConns(out)
+	return out[:min(len(out), connCap)]
+}
+
+// sortConns orders the table for display: live traffic first, then
+// listeners, then the tail, stable within each group.
+func sortConns(out []Conn) {
+	sort.SliceStable(out, func(i, j int) bool {
+		ri, rj := connRank(out[i].State), connRank(out[j].State)
+		if ri != rj {
+			return ri < rj
+		}
+		if out[i].Local != out[j].Local {
+			return out[i].Local < out[j].Local
+		}
+		return out[i].Remote < out[j].Remote
+	})
+}
+
+// connAddr formats an ip:port pair, bracketing IPv6; a zero port yields
+// the wildcard "*".
+func connAddr(ip string, port uint32) string {
+	if ip == "" {
+		ip = "*"
+	} else if strings.Contains(ip, ":") {
+		ip = "[" + ip + "]"
+	}
+	if port == 0 {
+		return ip + ":*"
+	}
+	return ip + ":" + strconv.FormatUint(uint64(port), 10)
 }
 
 // memPercent converts an RSS sample into a percent of physical memory.

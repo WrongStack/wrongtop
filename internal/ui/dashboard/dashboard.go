@@ -1,11 +1,11 @@
 // Package dashboard renders the wrongtop overview tab: a btop-style
 // single-screen grid of host, CPU, memory, network, disk and top-process
-// panels, with a glances-style alert strip when thresholds are crossed.
+// panels. Each panel carries its live readout on the border line —
+// title left, value right — with alert chips in the app-level tab bar.
 package dashboard
 
 import (
 	"fmt"
-	"image/color"
 	"strings"
 
 	"charm.land/bubbletea/v2"
@@ -32,6 +32,8 @@ type Model struct {
 	txGraph   *canvas.Graph
 	loadGraph *canvas.Graph
 
+	coreGraphs map[int]*canvas.Graph // rolling graph per logical core
+
 	rxScale canvas.Scale // auto ceilings for the rate graphs
 	txScale canvas.Scale
 
@@ -47,14 +49,6 @@ type Model struct {
 	ioHist map[string][]float64
 
 	density int // 0 full, 1 compact (fewer graphs), 2 minimal (HOST+CPU)
-
-	// value ramps for the gradient meters, derived from the theme
-	cpuRamp canvas.Ramp
-	memRamp canvas.Ramp
-	ioRamp  canvas.Ramp
-	batRamp canvas.Ramp
-	rxRamp  canvas.Ramp // download share of the mixed meters
-	txRamp  canvas.Ramp // upload share of the mixed meters
 }
 
 // Density presets cycle with p and start from config layout.
@@ -64,7 +58,8 @@ const (
 	densityMinimal
 )
 
-// New builds the dashboard tab.
+// New builds the dashboard tab. Graph ramps come from the theme so the
+// graphs and the meters always read the same palette story.
 func New(cfg *config.Config, th *theme.Theme) *Model {
 	density := densityFull
 	switch cfg.Layout {
@@ -73,48 +68,43 @@ func New(cfg *config.Config, th *theme.Theme) *Model {
 	case "minimal":
 		density = densityMinimal
 	}
-	m := &Model{
-		cfg:       cfg,
-		th:        th,
-		density:   density,
-		ioHist:    make(map[string][]float64),
-		cpuGraph:  canvas.New(60, 3, ramp(th, th.Palette.Green, th.Palette.Yellow, th.Palette.Orange, th.Palette.Red)),
-		memGraph:  canvas.New(34, 2, ramp(th, th.Palette.Blue, th.Palette.Purple, th.Palette.Red)),
-		swapGraph: canvas.New(34, 1, ramp(th, th.Palette.Purple, th.Palette.Red)),
-		rxGraph:   canvas.New(netCol-2, 2, ramp(th, th.Palette.Green, th.Palette.Cyan)),
-		txGraph:   canvas.New(netCol-2, 2, ramp(th, th.Palette.Blue, th.Palette.Cyan)),
-		loadGraph: canvas.New(34, 2, ramp(th, th.Palette.Cyan, th.Palette.Green)),
+	return &Model{
+		cfg:        cfg,
+		th:         th,
+		density:    density,
+		ioHist:     make(map[string][]float64),
+		coreGraphs: make(map[int]*canvas.Graph),
+		cpuGraph:   canvas.New(60, 3, th.Ramps.CPU.Colors()),
+		memGraph:   canvas.New(34, 2, th.Ramps.Mem.Colors()),
+		swapGraph:  canvas.New(34, 1, th.Ramps.Swap.Colors()),
+		rxGraph:    canvas.New(netCol-2, 2, th.Ramps.RX.Colors()),
+		txGraph:    canvas.New(netCol-2, 2, th.Ramps.TX.Colors()),
+		loadGraph:  canvas.New(34, 2, th.Ramps.Load.Colors()),
 	}
-	m.applyRamps(th)
-	return m
-}
-
-// applyRamps derives the gradient meters from the palette.
-func (m *Model) applyRamps(th *theme.Theme) {
-	p := th.Palette
-	m.cpuRamp = canvas.Ramp{p.Green, p.Yellow, p.Orange, p.Red}
-	m.memRamp = canvas.Ramp{p.Blue, p.Purple, p.Red}
-	m.ioRamp = canvas.Ramp{p.Cyan, p.Green, p.Yellow, p.Red}
-	m.batRamp = canvas.Ramp{p.Red, p.Orange, p.Green}
-	m.rxRamp = canvas.Ramp{p.Green, p.Cyan}
-	m.txRamp = canvas.Ramp{p.Blue, p.Cyan}
 }
 
 // Title implements ui.Tab.
-func (m *Model) Title() string { return "⌂ DASHBOARD" }
+func (m *Model) Title() string { return ui.Icon("host", m.cfg.NerdFonts) + " DASHBOARD" }
+
+// SetVisible implements ui.Tab. The dashboard keeps pushing graph
+// history while hidden (that is the point of a warm dashboard); its
+// view cache already makes rebuilds lazy.
+func (m *Model) SetVisible(bool) {}
 
 // SetTheme implements ui.Tab; graph ramps derive from the palette so
 // they must be rebuilt alongside the styles.
 func (m *Model) SetTheme(th *theme.Theme) {
 	m.th = th
 	m.viewCache = ""
-	m.applyRamps(th)
-	m.cpuGraph.SetRamp(ramp(th, th.Palette.Green, th.Palette.Yellow, th.Palette.Orange, th.Palette.Red))
-	m.memGraph.SetRamp(ramp(th, th.Palette.Blue, th.Palette.Purple, th.Palette.Red))
-	m.swapGraph.SetRamp(ramp(th, th.Palette.Purple, th.Palette.Red))
-	m.rxGraph.SetRamp(ramp(th, th.Palette.Green, th.Palette.Cyan))
-	m.txGraph.SetRamp(ramp(th, th.Palette.Blue, th.Palette.Cyan))
-	m.loadGraph.SetRamp(ramp(th, th.Palette.Cyan, th.Palette.Green))
+	m.cpuGraph.SetRamp(th.Ramps.CPU.Colors())
+	m.memGraph.SetRamp(th.Ramps.Mem.Colors())
+	m.swapGraph.SetRamp(th.Ramps.Swap.Colors())
+	m.rxGraph.SetRamp(th.Ramps.RX.Colors())
+	m.txGraph.SetRamp(th.Ramps.TX.Colors())
+	m.loadGraph.SetRamp(th.Ramps.Load.Colors())
+	for _, g := range m.coreGraphs {
+		g.SetRamp(th.Ramps.CPU.Colors())
+	}
 }
 
 // layoutClass picks how the panels arrange at the current size.
@@ -154,12 +144,10 @@ func (m *Model) SetSize(width, height int) {
 		return
 	}
 	cpuW := max(20, width-hostCol-8)
-	cpuH := 3
 	if m.density == densityFull && m.class() == layoutGrid {
-		// leave room for the big-digit hero beside a hero-height graph:
-		// up to three digits (11 cells) plus the two-column gap
-		cpuW = max(20, width-hostCol-2-13)
-		cpuH = canvas.BigNumberHeight
+		// the wide CPU panel: full-width total graph with the per-core
+		// graph grid beneath it
+		cpuW = max(20, width-hostCol-2)
 	}
 	memW := max(14, hostCol-2)
 	rxW := max(10, netCol-2)
@@ -168,7 +156,10 @@ func (m *Model) SetSize(width, height int) {
 		memW = max(12, width/2-8)
 		rxW = max(12, width-6)
 	}
-	m.cpuGraph.Resize(cpuW, cpuH)
+	m.cpuGraph.Resize(cpuW, 3)
+	for _, g := range m.coreGraphs {
+		g.Resize(m.coreGraphW(width-hostCol-2), 2)
+	}
 	m.memGraph.Resize(memW, 2)
 	m.swapGraph.Resize(memW, 1)
 	m.rxGraph.Resize(rxW, 2)
@@ -183,6 +174,7 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 		m.snap = msg.Snap
 		m.live = true
 		m.recordIO()
+		m.recordCores()
 		m.viewCache = "" // new data: rebuild lazily on the next View
 
 		cores := float64(max(1, len(m.snap.CPU.Cores)))
@@ -210,8 +202,12 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 const ioSparkSamples = 10
 
 // recordIO appends one total-rate sample per device for the disks panel
-// sparklines.
+// sparklines. The map is bounded: a machine churning device names (USB
+// docks, disk images) cannot grow it without limit.
 func (m *Model) recordIO() {
+	if len(m.ioHist) > 128 {
+		m.ioHist = make(map[string][]float64)
+	}
 	for _, d := range m.snap.DiskIOs {
 		h := append(m.ioHist[d.Name], d.ReadBytes+d.WriteBytes)
 		if len(h) > ioSparkSamples {
@@ -219,6 +215,32 @@ func (m *Model) recordIO() {
 		}
 		m.ioHist[d.Name] = h
 	}
+}
+
+// recordCores feeds one sample into every per-core rolling graph,
+// creating graphs on demand (the core count is unknown until the first
+// snapshot) and pruning graphs of cores that no longer exist.
+func (m *Model) recordCores() {
+	w := m.coreGraphW(m.width - hostCol - 2)
+	for i, pct := range m.snap.CPU.Cores {
+		g, ok := m.coreGraphs[i]
+		if !ok {
+			g = canvas.New(w, 2, m.th.Ramps.CPU.Colors())
+			m.coreGraphs[i] = g
+		}
+		g.Push(clamp01(pct / 100))
+	}
+	for i := range m.coreGraphs {
+		if i >= len(m.snap.CPU.Cores) {
+			delete(m.coreGraphs, i)
+		}
+	}
+}
+
+// coreGraphW sizes the per-core graphs: six cells per row is the sweet
+// spot, each cell spending ~8 cells on its label and value.
+func (m *Model) coreGraphW(innerW int) int {
+	return clampInt(innerW/6-8, 8, 24)
 }
 
 // View implements ui.Tab. The rendered frame is cached: View runs after
@@ -230,7 +252,7 @@ func (m *Model) View() string {
 	}
 	if !m.live {
 		wait := ui.Box(ui.BorderFor(m.cfg.Border), m.th.Styles.Border, m.th.Styles.BorderChar,
-			m.th.Styles.BorderTitle, "WRONGTOP", m.th.Styles.Muted.Render("waiting for samples…"))
+			m.th.Styles.BorderTitle, "WRONGTOP", "", m.th.Styles.Muted.Render("waiting for samples…"))
 		return wait
 	}
 	if m.viewCache != "" {
@@ -270,37 +292,33 @@ func (m *Model) gridPanels(h int) []ui.Panel {
 		b = h - a + 1
 	}
 
-	title := func(color string) lipgloss.Style {
-		return lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Bold(true)
-	}
-	// per-category border colors, btop-style: each panel owns its frame
-	borders := func(color string) *lipgloss.Style {
-		st := lipgloss.NewStyle().Foreground(lipgloss.Color(color))
-		return &st
-	}
-	pal := m.th.Palette
 	// divider columns at x=hostW and x=hostW+netW
 	hostW := hostCol
 	netW := netCol
 	cpuInner := w - hostW - 2
 
 	panels := []ui.Panel{
-		{X: 0, Y: 0, W: hostW + 1, H: a, Title: "⌂ HOST", TitleStyle: title(pal.Blue),
-			Border: borders(pal.Blue), Lines: m.hostView(hostW-2, a-2)},
-		{X: hostW, Y: 0, W: w - hostW, H: a, Title: "⚡ CPU", TitleStyle: title(pal.Green),
-			Border: borders(pal.Green), Lines: m.cpuView(cpuInner, a-2)},
+		{X: 0, Y: 0, W: hostW + 1, H: a, Title: m.panelTitle("host", "HOST"),
+			TitleStyle: m.catTitle("host"), Right: fitRight(hostW+1, m.panelTitle("host", "HOST"), m.hostRight()),
+			Border: m.catBorder("host"), Lines: m.hostView(hostW-2, a-2)},
+		{X: hostW, Y: 0, W: w - hostW, H: a, Title: m.panelTitle("cpu", "CPU"),
+			TitleStyle: m.catTitle("cpu"), Right: fitRight(w-hostW, m.panelTitle("cpu", "CPU"), m.cpuRight()),
+			Border: m.catBorder("cpu"), Lines: m.cpuView(cpuInner, a-2)},
 	}
 	if m.density == densityMinimal {
 		return panels
 	}
 
 	panels = append(panels,
-		ui.Panel{X: 0, Y: a - 1, W: hostW + 1, H: b, Title: "▦ MEMORY", TitleStyle: title(pal.Purple),
-			Border: borders(pal.Purple), Lines: m.memView(hostW - 2)},
-		ui.Panel{X: hostW, Y: a - 1, W: netW + 1, H: b, Title: "⇅ NETWORK", TitleStyle: title(pal.Cyan),
-			Border: borders(pal.Cyan), Lines: m.netView(max(0, b-7))},
-		ui.Panel{X: hostW + netW, Y: a - 1, W: w - hostW - netW, H: b, Title: "▤ DISKS", TitleStyle: title(pal.Orange),
-			Border: borders(pal.Orange), Lines: m.diskView(w-hostW-netW-2, max(1, b-3))},
+		ui.Panel{X: 0, Y: a - 1, W: hostW + 1, H: b, Title: m.panelTitle("mem", "MEMORY"),
+			TitleStyle: m.catTitle("mem"), Right: fitRight(hostW+1, m.panelTitle("mem", "MEMORY"), m.memRight()),
+			Border: m.catBorder("mem"), Lines: m.memView(hostW - 2)},
+		ui.Panel{X: hostW, Y: a - 1, W: netW + 1, H: b, Title: m.panelTitle("net", "NETWORK"),
+			TitleStyle: m.catTitle("net"),
+			Border:     m.catBorder("net"), Lines: m.netView(max(0, b-7))},
+		ui.Panel{X: hostW + netW, Y: a - 1, W: w - hostW - netW, H: b, Title: m.panelTitle("disk", "DISKS"),
+			TitleStyle: m.catTitle("disk"), Right: fitRight(w-hostW-netW, m.panelTitle("disk", "DISKS"), m.diskRight()),
+			Border: m.catBorder("disk"), Lines: m.diskView(w-hostW-netW-2, max(2, b-2))},
 	)
 	if c == 0 {
 		return panels
@@ -309,13 +327,15 @@ func (m *Model) gridPanels(h int) []ui.Panel {
 	procY, procH := a+b-2, c
 	if gpus := len(m.snap.GPUs); gpus > 0 && c >= 8 {
 		gh := min(gpus+3, 6) // up to four adapters + borders
-		panels = append(panels, ui.Panel{X: 0, Y: procY, W: w, H: gh, Title: "◆ GPUS",
-			TitleStyle: title(pal.Red), Border: borders(pal.Red), Lines: m.gpuLines(w-2, gh-2)})
+		panels = append(panels, ui.Panel{X: 0, Y: procY, W: w, H: gh, Title: m.panelTitle("gpu", "GPUS"),
+			TitleStyle: m.catTitle("gpu"), Right: fitRight(w, m.panelTitle("gpu", "GPUS"), m.gpuRight()),
+			Border: m.catBorder("gpu"), Lines: m.gpuLines(w-2, gh-2)})
 		procY += gh - 1 // share the border row
 		procH -= gh - 1
 	}
-	panels = append(panels, ui.Panel{X: 0, Y: procY, W: w, H: procH, Title: "☰ PROCESSES",
-		TitleStyle: title(pal.FG), Border: borders(pal.FG), Lines: m.procView(w-2, max(2, procH-3))})
+	panels = append(panels, ui.Panel{X: 0, Y: procY, W: w, H: procH, Title: m.panelTitle("proc", "PROCESSES"),
+		TitleStyle: m.catTitle("proc"), Right: fitRight(w, m.panelTitle("proc", "PROCESSES"), m.procRight()),
+		Border: m.catBorder("proc"), Lines: m.procView(w-2, max(2, procH-3))})
 	return panels
 }
 
@@ -336,15 +356,15 @@ func (m *Model) stackedRows() []string {
 	var rows []string
 	if m.class() == layoutNarrow {
 		rows = append(rows,
-			m.box(w-2, "HOST", strings.Join(m.hostView(w-4, 99), "\n")), "",
-			m.box(w-2, "CPU", strings.Join(m.cpuView(cpuInner, coreRows+4), "\n")), "",
+			m.box(w-2, "host", "HOST", m.hostRight(), strings.Join(m.hostView(w-4, 99), "\n")), "",
+			m.box(w-2, "cpu", "CPU", m.cpuRight(), strings.Join(m.cpuView(cpuInner, coreRows+4), "\n")), "",
 		)
 	} else {
 		rows = append(rows,
 			lipgloss.JoinHorizontal(lipgloss.Top,
-				m.box(hostCol-2, "HOST", padLines(m.hostView(hostCol-4, coreRows+4), coreRows+4)),
+				m.box(hostCol-2, "host", "HOST", m.hostRight(), padLines(m.hostView(hostCol-4, coreRows+4), coreRows+4)),
 				" ",
-				m.box(cpuInner, "CPU", padLines(m.cpuView(cpuInner, coreRows+4), coreRows+4)),
+				m.box(cpuInner, "cpu", "CPU", m.cpuRight(), padLines(m.cpuView(cpuInner, coreRows+4), coreRows+4)),
 			), "",
 		)
 	}
@@ -356,20 +376,24 @@ func (m *Model) stackedRows() []string {
 	if m.density == densityMinimal {
 		return rows // HOST|CPU only
 	}
-	rows = append(rows, m.box(max(20, 2*memInner+2), "MEMORY", strings.Join(m.memView(memInner), "\n")), "")
+	rows = append(rows, m.box(max(20, 2*memInner+2), "mem", "MEMORY", m.memRight(),
+		strings.Join(m.memView(memInner), "\n")), "")
 
+	// the network and disk boxes share a row: both pad to the taller of
+	// the two content budgets so their borders align
+	netH := max(5+ifaceRows, diskRows+2)
 	if m.class() == layoutNarrow {
 		rows = append(rows,
-			m.box(w-2, "NETWORK", strings.Join(m.netView(ifaceRows), "\n")), "",
-			m.box(w-2, "DISKS", strings.Join(m.diskView(w-6, diskRows+1), "\n")), "",
+			m.box(w-2, "net", "NETWORK", "", strings.Join(m.netView(ifaceRows), "\n")), "",
+			m.box(w-2, "disk", "DISKS", m.diskRight(), strings.Join(m.diskView(w-6, diskRows+1), "\n")), "",
 		)
 	} else {
 		netInner := netCol - 2
 		diskInner := w - netCol - 4
 		rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top,
-			m.box(netInner, "NETWORK", padLines(m.netView(ifaceRows), diskRows+1)),
+			m.box(netInner, "net", "NETWORK", "", padLines(m.netView(ifaceRows), netH)),
 			" ",
-			m.box(diskInner, "DISKS", padLines(m.diskView(diskInner, diskRows+1), diskRows+1)),
+			m.box(diskInner, "disk", "DISKS", m.diskRight(), padLines(m.diskView(diskInner, netH), netH)),
 		), "")
 	}
 
@@ -377,32 +401,80 @@ func (m *Model) stackedRows() []string {
 		if gpus := len(m.snap.GPUs); gpus > 0 && procRows >= 5 {
 			gpuRows := min(3, gpus)
 			rows = append(rows,
-				m.box(w-2, "GPUS", strings.Join(m.gpuLines(w-6, gpuRows), "\n")), "")
+				m.box(w-2, "gpu", "GPUS", m.gpuRight(), strings.Join(m.gpuLines(w-6, gpuRows), "\n")), "")
 			procRows -= gpuRows + 1
 		}
-		rows = append(rows, m.box(w-2, "PROCESSES", strings.Join(m.procView(w-6, procRows), "\n")))
+		rows = append(rows, m.box(w-2, "proc", "PROCESSES", m.procRight(),
+			strings.Join(m.procView(w-6, procRows), "\n")))
 	}
 	return rows
 }
 
-// box renders a titled border around content padded to exactly innerW
-// cells so grid columns line up.
-func (m *Model) box(innerW int, title, content string) string {
+// catColor maps a panel category to its palette accent — the same color
+// on the border, the title and the graph chrome, grid or stacked.
+func (m *Model) catColor(kind string) string {
+	pal := m.th.Palette
+	switch kind {
+	case "host":
+		return pal.Blue
+	case "cpu":
+		return pal.Green
+	case "mem":
+		return pal.Purple
+	case "net":
+		return pal.Cyan
+	case "disk":
+		return pal.Orange
+	case "gpu":
+		return pal.Red
+	default:
+		return pal.FG
+	}
+}
+
+func (m *Model) catTitle(kind string) lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(lipgloss.Color(m.catColor(kind))).Bold(true)
+}
+
+func (m *Model) catBorder(kind string) *lipgloss.Style {
+	st := lipgloss.NewStyle().Foreground(lipgloss.Color(m.catColor(kind)))
+	return &st
+}
+
+// panelTitle renders "⌂ HOST" with the configured icon set.
+func (m *Model) panelTitle(kind, label string) string {
+	return ui.Icon(kind, m.cfg.NerdFonts) + " " + label
+}
+
+// fitRight drops the border readout when title and value would crowd
+// the panel top — a tight border line reads worse than no readout.
+// The margin covers the title's surrounding spaces plus a visible fill.
+func fitRight(panelW int, title, right string) string {
+	if right == "" || lipgloss.Width(title)+lipgloss.Width(right)+4 > panelW {
+		return ""
+	}
+	return right
+}
+
+// box renders a titled, category-colored border around content padded
+// to exactly innerW cells so grid columns line up.
+func (m *Model) box(innerW int, kind, title, right, content string) string {
 	padded := lipgloss.NewStyle().Width(innerW).Render(content)
-	return ui.Box(ui.BorderFor(m.cfg.Border), m.th.Styles.Border, m.th.Styles.BorderChar,
-		m.th.Styles.BorderTitle, title, padded)
+	label := m.panelTitle(kind, title)
+	if lipgloss.Width(label)+lipgloss.Width(right)+6 > innerW {
+		right = "" // never let the chrome stretch the box past the terminal
+	}
+	col := m.catColor(kind)
+	boxStyle := lipgloss.NewStyle().
+		Border(ui.BorderFor(m.cfg.Border)).
+		Foreground(lipgloss.Color(col))
+	return ui.Box(ui.BorderFor(m.cfg.Border), boxStyle,
+		lipgloss.NewStyle().Foreground(lipgloss.Color(col)),
+		m.catTitle(kind), label, right, padded)
 }
 
 func (m *Model) kv(key, val string) string {
 	return m.th.Styles.Muted.Render(fmt.Sprintf("%-8s", key)) + val
-}
-
-func ramp(th *theme.Theme, hex ...string) []color.Color {
-	out := make([]color.Color, len(hex))
-	for i, h := range hex {
-		out[i] = lipgloss.Color(h)
-	}
-	return out
 }
 
 func clamp01(v float64) float64 { return min(max(v, 0), 1) }

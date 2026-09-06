@@ -135,12 +135,15 @@ func (g *Graph) View() string {
 		levels[offset+i] = v / g.max * float64(rows)
 	}
 
+	// Every cell of a row shares one style, so each row is rendered as
+	// a single styled string — width×height Render calls per frame were
+	// the single largest allocation source in the UI.
 	lines := make([]string, g.height)
 	for cy := 0; cy < g.height; cy++ {
 		// btop-style height gradient: the whole bottom row sits at the
 		// ramp's start, the top row at its end, regardless of values
 		rowStyle := g.styleFor(1 - float64(cy)/float64(max(1, g.height-1)))
-		var sb strings.Builder
+		row := make([]rune, g.width)
 		for cx := 0; cx < g.width; cx++ {
 			var bits byte
 			for c := 0; c < 2; c++ {
@@ -152,9 +155,9 @@ func (g *Graph) View() string {
 					}
 				}
 			}
-			sb.WriteString(rowStyle.Render(string(rune(brailleBase + int(bits)))))
+			row[cx] = rune(brailleBase + int(bits))
 		}
-		lines[cy] = sb.String()
+		lines[cy] = rowStyle.Render(string(row))
 	}
 	return strings.Join(lines, "\n")
 }

@@ -6,6 +6,7 @@ import (
 	"cmp"
 	"fmt"
 	"slices"
+	"strings"
 
 	"charm.land/bubbles/v2/table"
 	"charm.land/bubbletea/v2"
@@ -28,35 +29,51 @@ type Model struct {
 	table         table.Model
 	nets          []collector.NetIface
 	live          bool
-
-	rxRamp canvas.Ramp // download share of the mixed meters
-	txRamp canvas.Ramp // upload share of the mixed meters
+	visible       bool                 // the active tab; hidden tabs skip table rebuilds
+	hist          map[string][]float64 // per-interface total-rate history
 }
 
 // actWidth is the width of the MIX column in cells.
-const actWidth = 20
+const (
+	actWidth = 20
+	// activitySamples is the history length of the ACTIVITY sparklines.
+	activitySamples = 12
+)
 
 // New builds the network tab.
 func New(cfg *config.Config, th *theme.Theme) *Model {
 	t := table.New(table.WithFocused(true), table.WithWidth(100), table.WithHeight(20))
 	t.SetColumns(columns(100)) // sane defaults until SetSize arrives
-	return &Model{
-		cfg:    cfg,
-		th:     th,
-		table:  t,
-		rxRamp: canvas.Ramp{th.Palette.Green, th.Palette.Cyan},
-		txRamp: canvas.Ramp{th.Palette.Blue, th.Palette.Cyan},
+	m := &Model{cfg: cfg, th: th, table: t, hist: make(map[string][]float64), visible: true}
+	m.applyTableStyles()
+	return m
+}
+
+// SetVisible implements ui.Tab. Hidden tabs keep their history warm but
+// skip the row rebuild; activation catches up.
+func (m *Model) SetVisible(visible bool) {
+	m.visible = visible
+	if visible {
+		m.rebuild()
 	}
 }
 
+// applyTableStyles themes the table: muted header, soft accent fill on
+// the focused row.
+func (m *Model) applyTableStyles() {
+	ts := table.DefaultStyles()
+	ts.Header = ts.Header.Foreground(lipgloss.Color(m.th.Palette.Gray))
+	ts.Selected = m.th.Styles.Selected.Padding(0, 1)
+	m.table.SetStyles(ts)
+}
+
 // Title implements ui.Tab.
-func (m *Model) Title() string { return "⇅ NETWORK" }
+func (m *Model) Title() string { return ui.Icon("net", m.cfg.NerdFonts) + " NETWORK" }
 
 // SetTheme implements ui.Tab.
 func (m *Model) SetTheme(th *theme.Theme) {
 	m.th = th
-	m.rxRamp = canvas.Ramp{th.Palette.Green, th.Palette.Cyan}
-	m.txRamp = canvas.Ramp{th.Palette.Blue, th.Palette.Cyan}
+	m.applyTableStyles()
 }
 
 // SetSize implements ui.Tab.
@@ -64,7 +81,8 @@ func (m *Model) SetSize(width, height int) {
 	m.width, m.height = width, height
 	m.table.SetWidth(width)
 	m.table.SetHeight(max(3, height-6))
-	m.table.SetColumns(columns(width))
+	ui.SetTableColumns(&m.table, columns(width))
+	m.rebuild() // resize can change the column shape; rows must follow
 }
 
 // Update implements ui.Tab.
@@ -73,7 +91,10 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 	case collector.SnapshotMsg:
 		m.nets = msg.Snap.Nets
 		m.live = true
-		m.rebuild()
+		m.recordRates()
+		if m.visible {
+			m.rebuild()
+		}
 		return nil
 
 	case tea.MouseWheelMsg:
@@ -100,6 +121,22 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 	return nil
 }
 
+// recordRates appends one total-rate sample per interface for the
+// ACTIVITY sparklines; the map is bounded against interface churn
+// (VPNs, Wi-Fi hotspots).
+func (m *Model) recordRates() {
+	if len(m.hist) > 128 {
+		m.hist = make(map[string][]float64)
+	}
+	for _, n := range m.nets {
+		h := append(m.hist[n.Name], n.RxRate+n.TxRate)
+		if len(h) > activitySamples {
+			h = h[len(h)-activitySamples:]
+		}
+		m.hist[n.Name] = h
+	}
+}
+
 // rebuild sorts interfaces by current activity (busiest first) and
 // refreshes rows.
 func (m *Model) rebuild() {
@@ -110,6 +147,8 @@ func (m *Model) rebuild() {
 	slices.Reverse(nets)
 
 	totals := m.width >= 100
+	drops := m.width >= 112
+	activity := m.width >= 88
 	rows := make([]table.Row, len(nets))
 	for i, n := range nets {
 		row := table.Row{
@@ -122,6 +161,20 @@ func (m *Model) rebuild() {
 				fmt.Sprintf("%11s", format.Bytes(n.RxTotal)),
 				fmt.Sprintf("%11s", format.Bytes(n.TxTotal)))
 		}
+		if drops {
+			cell := m.th.Styles.Muted.Render(fmt.Sprintf("%7.1f", n.RxDrop+n.TxDrop))
+			if n.RxDrop+n.TxDrop > 0.5 {
+				cell = m.th.Styles.Warn.Render(fmt.Sprintf("%7.1f", n.RxDrop+n.TxDrop))
+			}
+			row = append(row, cell)
+		}
+		if activity {
+			spark := canvas.SparklineScaled(m.hist[n.Name], m.th.Ramps.RX)
+			if pad := 12 - lipgloss.Width(spark); pad > 0 {
+				spark += strings.Repeat(" ", pad)
+			}
+			row = append(row, spark)
+		}
 		// glances-style mixed meter: the green share of the bar is the
 		// download fraction, the blue share the upload fraction
 		total := n.RxRate + n.TxRate
@@ -129,7 +182,7 @@ func (m *Model) rebuild() {
 		if total > 0 {
 			share = n.RxRate / total
 		}
-		row = append(row, canvas.DualBar(actWidth, share, m.rxRamp, m.txRamp))
+		row = append(row, canvas.DualBar(actWidth, share, m.th.Ramps.RX, m.th.Ramps.TX))
 		rows[i] = row
 	}
 	m.table.SetRows(rows)
@@ -173,6 +226,12 @@ func columns(width int) []table.Column {
 		cols = append(cols,
 			table.Column{Title: "TOTAL RX", Width: 11},
 			table.Column{Title: "TOTAL TX", Width: 11})
+	}
+	if width >= 112 {
+		cols = append(cols, table.Column{Title: "DROP/s", Width: 8})
+	}
+	if width >= 88 {
+		cols = append(cols, table.Column{Title: "ACTIVITY", Width: 12})
 	}
 	return append(cols, table.Column{Title: "MIX ↓↑", Width: actWidth})
 }
