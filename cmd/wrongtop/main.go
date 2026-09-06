@@ -72,7 +72,7 @@ func newRootCmd() *cobra.Command {
 		Use:   "version",
 		Short: "Print the version",
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Fprintln(cmd.OutOrStdout(), "wrongtop", version)
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "wrongtop", version)
 		},
 	})
 
@@ -80,7 +80,7 @@ func newRootCmd() *cobra.Command {
 		Use:   "config-sample",
 		Short: "Print an annotated sample config file",
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Fprint(cmd.OutOrStdout(), config.Sample)
+			_, _ = fmt.Fprint(cmd.OutOrStdout(), config.Sample)
 		},
 	})
 
