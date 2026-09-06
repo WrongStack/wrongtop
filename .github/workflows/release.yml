@@ -10,7 +10,11 @@ permissions:
 
 jobs:
   goreleaser:
-    runs-on: ubuntu-latest
+    # darwin builds link IOKit (cgo), so this must run on macOS: the
+    # arm64 runner builds arm64 natively and cross-compiles amd64 via
+    # Apple clang's -arch support. Pure-Go linux/windows targets cross
+    # fine from here too — one job, all eight artifacts.
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v6
         with:
@@ -20,10 +24,14 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - uses: goreleaser/goreleaser-action@v6
+      - name: Run goreleaser
+        uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser
           version: latest
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # only used when brews.skip_upload flips to false; empty until
+          # the HOMEBREW_TAP_TOKEN secret exists, which is fine
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}

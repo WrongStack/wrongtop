@@ -7,33 +7,64 @@ before:
     - go mod tidy
 
 builds:
-  # darwin links IOKit (cgo) for AppleSMC temperatures, fans and battery
-  - id: darwin
+  # darwin links IOKit (cgo) for AppleSMC temperatures, fans and battery.
+  # The release workflow runs on an arm64 macOS runner: arm64 is native,
+  # and amd64 goes through Apple clang's -arch cross-compile (same SDK,
+  # real cgo — Linux runners cannot produce cgo darwin binaries at all).
+  # main must be spelled out: the repo root has no main package.
+  - id: darwin-arm64
+    main: ./cmd/wrongtop
+    goos:
+      - darwin
+    goarch:
+      - arm64
     env:
       - CGO_ENABLED=1
+    ldflags:
+      - -s -w
+      # main.version, NOT the import path: Go 1.27's linker only accepts
+      # the main.* form for the main package (the long form silently no-ops)
+      - -X main.version={{.Version}}
+
+  - id: darwin-amd64
+    main: ./cmd/wrongtop
     goos:
       - darwin
     goarch:
       - amd64
-      - arm64
+    env:
+      - CGO_ENABLED=1
+      - CC=clang -arch x86_64
     ldflags:
       - -s -w
-      - -X github.com/wrongstack/wrongtop/cmd/wrongtop.version={{.Version}}
+      # main.version, NOT the import path: Go 1.27's linker only accepts
+      # the main.* form for the main package (the long form silently no-ops)
+      - -X main.version={{.Version}}
+
+  # linux and windows are pure Go (the collector falls back gracefully
+  # without cgo: hwmon/ACPI instead of AppleSMC).
   - id: default
-    env:
-      - CGO_ENABLED=0
+    main: ./cmd/wrongtop
     goos:
       - linux
       - windows
     goarch:
       - amd64
       - arm64
+    env:
+      - CGO_ENABLED=0
     ldflags:
       - -s -w
-      - -X github.com/wrongstack/wrongtop/cmd/wrongtop.version={{.Version}}
+      # main.version, NOT the import path: Go 1.27's linker only accepts
+      # the main.* form for the main package (the long form silently no-ops)
+      - -X main.version={{.Version}}
 
 archives:
-  - formats: ["{{ if eq .Os \"windows\" }}zip{{ else }}tar.gz{{ end }}"]
+  - formats: ["tar.gz"]
+    # windows users expect zips; everything else stays tar.gz
+    format_overrides:
+      - goos: windows
+        formats: ["zip"]
     name_template: >-
       {{ .ProjectName }}_
       {{- .Os }}_
@@ -55,10 +86,23 @@ changelog:
       - "^test:"
       - "^chore:"
 
-brews:
+homebrew_casks:
   - repository:
-      owner: ersinkoc
+      owner: wrongstack
       name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    # flip to false once github.com/wrongstack/homebrew-tap exists and
+    # the HOMEBREW_TAP_TOKEN secret (a PAT with repo scope on the tap)
+    # is set on this repository — until then releases must not fail on it
+    skip_upload: true
     homepage: "https://github.com/wrongstack/wrongtop"
     description: "Cross-platform terminal system monitor: CPU, memory, processes, disks, network, Docker, sensors and GPUs."
     license: MIT
+    # the release binaries are signed neither notarized; without this
+    # Gatekeeper blocks every brew-installed wrongtop on macOS
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/wrongtop"]
+          end
