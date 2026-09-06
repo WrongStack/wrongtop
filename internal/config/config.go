@@ -177,6 +177,18 @@ func (c *Config) normalize() {
 	if c.Thresholds.TempCrit <= c.Thresholds.TempWarn {
 		c.Thresholds.TempCrit = 80
 	}
+	if c.Thresholds.CPUWarn <= 0 {
+		c.Thresholds.CPUWarn = 70
+	}
+	if c.Thresholds.CPUCrit <= c.Thresholds.CPUWarn {
+		c.Thresholds.CPUCrit = 90
+	}
+	if c.Thresholds.MemWarn <= 0 {
+		c.Thresholds.MemWarn = 80
+	}
+	if c.Thresholds.MemCrit <= c.Thresholds.MemWarn {
+		c.Thresholds.MemCrit = 95
+	}
 	if !validKeyOverride(c.Keys.Kill) {
 		c.Keys.Kill = "k"
 	}
