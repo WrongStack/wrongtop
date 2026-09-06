@@ -48,13 +48,13 @@ func (f *fakeDaemon) statusOf(s int) int {
 
 func (f *fakeDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p := versionedPath.ReplaceAllString(r.URL.Path, "")
-	switch {
-	case p == "/_ping":
+	switch p {
+	case "/_ping":
 		w.Header().Set("Api-Version", "1.55")
 		w.Header().Set("Ostype", "linux")
 		w.WriteHeader(http.StatusOK)
 		return
-	case p == "/containers/json":
+	case "/containers/json":
 		f.mu.Lock()
 		resp := f.list
 		f.mu.Unlock()
@@ -225,7 +225,7 @@ func TestList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	got, err := c.List(context.Background())
 	if err != nil {
@@ -304,7 +304,7 @@ func TestListError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	if _, err := c.List(context.Background()); err == nil {
 		t.Fatal("List accepted a 500 response")
 	}
@@ -316,7 +316,7 @@ func TestStartStopRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	ctx := context.Background()
 
 	t.Run("success", func(t *testing.T) {
@@ -365,7 +365,7 @@ func TestLogs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	ctx := context.Background()
 
 	t.Run("tty", func(t *testing.T) {
@@ -415,7 +415,7 @@ func TestLogs(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Logs: %v", err)
 		}
-		defer rc.Close()
+		defer func() { _ = rc.Close() }()
 		if tty {
 			t.Error("tty = true, want false when inspect fails")
 		}

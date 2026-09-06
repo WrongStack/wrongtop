@@ -91,7 +91,7 @@ func TestDialConnectionRefused(t *testing.T) {
 // aborts the client's (deliberately oversized) payload write.
 func TestDialAuthWriteFails(t *testing.T) {
 	addr := startFakeServer(t, func(conn net.Conn) {
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		var head [4]byte
 		if _, err := io.ReadFull(conn, head[:]); err != nil {
 			return
@@ -112,7 +112,7 @@ func TestDialAuthWriteFails(t *testing.T) {
 // TestDialWrongProtocol covers the protocol-version mismatch branch.
 func TestDialWrongProtocol(t *testing.T) {
 	addr := startFakeServer(t, func(conn net.Conn) {
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		var auth Auth
 		if err := ReadFrame(conn, 4<<10, &auth); err != nil {
 			return
@@ -132,7 +132,7 @@ func TestDialWrongProtocol(t *testing.T) {
 // that closes the stream after the handshake makes the next read fail.
 func TestNextAfterClose(t *testing.T) {
 	addr := startFakeServer(t, func(conn net.Conn) {
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		var auth Auth
 		if err := ReadFrame(conn, 4<<10, &auth); err != nil {
 			return

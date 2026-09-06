@@ -85,7 +85,7 @@ func TestServeListenError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	err = Serve(context.Background(), Options{
 		Listen:  ln.Addr().String(),
 		Token:   "secret",
@@ -108,13 +108,13 @@ func TestServeRegisterAfterCancel(t *testing.T) {
 	// The probe only gets a hello once Serve is accepting connections,
 	// which also proves the initial collect has finished.
 	probe := dialRetry(t, addr)
-	defer probe.Close()
+	defer func() { _ = probe.Close() }()
 	authorize(t, probe, "secret")
 
 	// Second client: send half of the auth frame header so the server
 	// blocks reading it, then cancel, then finish the handshake.
 	conn := dialRetry(t, addr)
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	if _, err := conn.Write([]byte{0, 0}); err != nil { // half of a 4-byte frame header
 		t.Fatal(err)
 	}
@@ -177,7 +177,7 @@ func TestServeDropsSlowClient(t *testing.T) {
 	errCh := startServe(ctx, t, addr, "secret", 250*time.Millisecond)
 
 	conn := dialRetry(t, addr)
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	authorize(t, conn, "secret")
 
 	// Stop reading: the server's socket buffers back up, handleConn
@@ -198,7 +198,7 @@ func TestServeDropsSlowClient(t *testing.T) {
 
 func TestHandleConnAuthReadError(t *testing.T) {
 	server, client := net.Pipe()
-	defer server.Close()
+	defer func() { _ = server.Close() }()
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -206,13 +206,13 @@ func TestHandleConnAuthReadError(t *testing.T) {
 			func(chan collector.Snapshot) bool { return true },
 			func(chan collector.Snapshot) {})
 	}()
-	client.Close() // hang up before sending auth
+	_ = client.Close() // hang up before sending auth
 	<-done
 }
 
 func TestHandleConnBadToken(t *testing.T) {
 	server, client := net.Pipe()
-	defer server.Close()
+	defer func() { _ = server.Close() }()
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -233,7 +233,7 @@ func TestHandleConnBadToken(t *testing.T) {
 
 func TestHandleConnHelloWriteError(t *testing.T) {
 	server, client := net.Pipe()
-	defer server.Close()
+	defer func() { _ = server.Close() }()
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -246,13 +246,13 @@ func TestHandleConnHelloWriteError(t *testing.T) {
 	if err := WriteFrame(client, Auth{Token: "secret"}); err != nil {
 		t.Fatal(err)
 	}
-	client.Close() // the server's hello write must fail
+	_ = client.Close() // the server's hello write must fail
 	<-done
 }
 
 func TestHandleConnRegisterRefused(t *testing.T) {
 	server, client := net.Pipe()
-	defer server.Close()
+	defer func() { _ = server.Close() }()
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -276,7 +276,7 @@ func TestHandleConnRegisterRefused(t *testing.T) {
 
 func TestHandleConnSnapshotWriteError(t *testing.T) {
 	server, client := net.Pipe()
-	defer server.Close()
+	defer func() { _ = server.Close() }()
 	chans := make(chan chan collector.Snapshot, 1)
 	var unregistered bool
 	done := make(chan struct{})
@@ -293,7 +293,7 @@ func TestHandleConnSnapshotWriteError(t *testing.T) {
 	if err := ReadFrame(client, 1<<10, &hello); err != nil {
 		t.Fatal(err)
 	}
-	client.Close() // the next snapshot write must fail
+	_ = client.Close() // the next snapshot write must fail
 	ch := <-chans
 	ch <- collector.Snapshot{Time: time.Unix(1000, 0).UTC()}
 	<-done
@@ -304,8 +304,8 @@ func TestHandleConnSnapshotWriteError(t *testing.T) {
 
 func TestHandleConnStreamsSnapshots(t *testing.T) {
 	server, client := net.Pipe()
-	defer client.Close()
-	defer server.Close()
+	defer func() { _ = client.Close() }()
+	defer func() { _ = server.Close() }()
 	chans := make(chan chan collector.Snapshot, 1)
 	unregistered := make(chan struct{})
 	done := make(chan struct{})
