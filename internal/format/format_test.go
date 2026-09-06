@@ -37,6 +37,31 @@ func TestRate(t *testing.T) {
 	}
 }
 
+// TestRateBeyondLastUnit pins the unit clamp on Rate: remote snapshots
+// arrive as JSON from a semi-trusted host, so a rate can be any finite
+// float. Before the clamp, any value >= 1e21 indexed "KMGTPE"[6] and
+// panicked the render, and +Inf spun the scaling loop forever.
+func TestRateBeyondLastUnit(t *testing.T) {
+	cases := []struct {
+		bps  float64
+		want string
+	}{
+		{1e18, "1.0 Eb/s"},             // last unit that scales naturally
+		{999e18, "999.0 Eb/s"},         // largest value below the cap
+		{1e21, "1000.0 Eb/s"},          // first value that used to panic
+		{1e30, "1000000000000.0 Eb/s"}, // far beyond the table, clamped
+	}
+	for _, c := range cases {
+		if got := Rate(c.bps); got != c.want {
+			t.Errorf("Rate(%v) = %q, want %q", c.bps, got, c.want)
+		}
+	}
+	// +Inf must terminate at the clamp, not spin forever.
+	if got := Rate(math.Inf(1)); got != "+Inf Eb/s" {
+		t.Errorf("Rate(+Inf) = %q, want %q", got, "+Inf Eb/s")
+	}
+}
+
 func TestBytes(t *testing.T) {
 	cases := []struct {
 		n    uint64

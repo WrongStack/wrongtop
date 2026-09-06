@@ -27,7 +27,10 @@ func Rate(bps float64) string {
 		return fmt.Sprintf("%.0f B/s", bps)
 	}
 	div, exp := float64(unit), 0
-	for n := bps / unit; n >= unit; n /= unit {
+	// exp is capped at the last unit: rate values can arrive straight
+	// off the remote wire, so any finite number — and +Inf — must clamp
+	// into "KMGTPE" instead of indexing past it (or looping forever).
+	for n := bps / unit; n >= unit && exp < len("KMGTPE")-1; n /= unit {
 		div *= unit
 		exp++
 	}
