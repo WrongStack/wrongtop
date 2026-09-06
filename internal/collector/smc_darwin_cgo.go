@@ -247,22 +247,31 @@ func smcTempFamily(key string) bool {
 		key[1] == 'C' && key[2] >= '0' && key[2] <= '9' // Intel core/package
 }
 
+// The SMC readers are indirected so discovery and the derived views can
+// be exercised with synthetic keys — real hardware cannot be made to
+// fail on demand.
+var (
+	smcKeyCountFn = smcKeyCount
+	smcKeyAtFn    = smcKeyAt
+	smcReadFn     = smcRead
+)
+
 // smcDiscover walks the whole SMC key table once and records the CPU
 // temperature candidates and fan-current keys. Key names and data types
 // are fixed for the machine's lifetime, so this never runs again.
 func smcDiscover() {
-	total, err := smcKeyCount()
+	total, err := smcKeyCountFn()
 	if err != nil || total <= 0 || total > 8192 {
 		return
 	}
 	for i := 0; i < total; i++ {
-		key, err := smcKeyAt(i)
+		key, err := smcKeyAtFn(i)
 		if err != nil {
 			continue
 		}
 		switch {
 		case smcTempFamily(key):
-			if typ, _, err := smcRead(key); err == nil && (typ == "sp78" || typ == "flt ") {
+			if typ, _, err := smcReadFn(key); err == nil && (typ == "sp78" || typ == "flt ") {
 				smcTempKeys = append(smcTempKeys, key)
 			}
 		case len(key) == 4 && key[0] == 'F' && key[1] >= '0' && key[1] <= '9' &&
@@ -282,7 +291,7 @@ func platformTemps(ctx context.Context) []Sensor {
 	smcDiscoverOnce.Do(smcDiscover)
 	var out []Sensor
 	for _, key := range smcTempKeys {
-		typ, data, err := smcRead(key)
+		typ, data, err := smcReadFn(key)
 		if err != nil {
 			continue
 		}
@@ -318,7 +327,7 @@ func readFans() []Fan {
 	smcDiscoverOnce.Do(smcDiscover)
 	var fans []Fan
 	for _, key := range smcFanKeys {
-		typ, data, err := smcRead(key)
+		typ, data, err := smcReadFn(key)
 		if err != nil || typ != "fpe2" || len(data) < 2 {
 			continue
 		}

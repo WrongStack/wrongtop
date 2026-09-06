@@ -200,7 +200,7 @@ func (m *Model) rebuild() {
 		style := m.th.Value(m.cfg.Thresholds.MemWarn, m.cfg.Thresholds.MemCrit, d.Percent)
 		row := table.Row{
 			ui.Trunc(d.Device, 16),
-			ui.Trunc(d.Mountpoint, 26),
+			ui.Trunc(d.Mountpoint, mountWidth(m.width)),
 		}
 		if full {
 			row = append(row, ui.Trunc(d.FSType, 8))
@@ -284,15 +284,20 @@ func usageMode(width int) int {
 	}
 }
 
-func usageColumns(width int) []table.Column {
+// mountWidth gives the MOUNT column the viewport's leftover width so the
+// table exactly fills the terminal, floored at 10 usable cells.
+func mountWidth(width int) int {
 	fixed := 16 + 14 + 5 // DEVICE + USAGE + USE%
 	if usageMode(width) == 2 {
 		fixed += 8 + 8 + 8 // TYPE + USED + TOTAL
 	}
-	mountW := max(10, 26+(width-fixed))
+	return max(10, width-fixed)
+}
+
+func usageColumns(width int) []table.Column {
 	cols := []table.Column{
 		{Title: "DEVICE", Width: 16},
-		{Title: "MOUNT", Width: mountW},
+		{Title: "MOUNT", Width: mountWidth(width)},
 	}
 	if usageMode(width) == 2 {
 		cols = append(cols, table.Column{Title: "TYPE", Width: 8})

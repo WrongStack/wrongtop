@@ -17,22 +17,28 @@ type procSys struct {
 // sysctl call. gopsutil's StatusWithContext would otherwise spawn one
 // `ps` subprocess per process on darwin.
 func readProcSys() (map[int32]procSys, error) {
-	kprocs, err := unix.SysctlKinfoProcSlice("kern.proc.all")
+	return readProcSysName("kern.proc.all")
+}
+
+func readProcSysName(sysctlName string) (map[int32]procSys, error) {
+	kprocs, err := unix.SysctlKinfoProcSlice(sysctlName)
 	if err != nil {
 		return nil, err
 	}
 	out := make(map[int32]procSys, len(kprocs))
+	var name [len(unix.KinfoProc{}.Proc.P_comm)]byte // stack scratch: one string alloc per proc, not two
 	for i := range kprocs {
 		k := &kprocs[i]
-		name := make([]byte, 0, len(k.Proc.P_comm))
+		n := 0
 		for _, c := range k.Proc.P_comm {
 			if c == 0 {
 				break
 			}
-			name = append(name, byte(c))
+			name[n] = byte(c)
+			n++
 		}
 		out[k.Proc.P_pid] = procSys{
-			Name:  string(name),
+			Name:  string(name[:n]),
 			State: kinfoState(k.Proc.P_stat),
 			UID:   int32(k.Eproc.Ucred.Uid),
 			PPID:  k.Eproc.Ppid,

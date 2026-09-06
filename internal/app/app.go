@@ -47,6 +47,10 @@ const cpuSparkSamples = 14
 // flashTTL is how long a transient status-bar note stays visible.
 const flashTTL = 3 * time.Second
 
+// dockerRetryDelay is the daemon-reconnect backoff; a var so tests can
+// shorten the wait.
+var dockerRetryDelay = 5 * time.Second
+
 // Model is the bubbletea root model.
 type Model struct {
 	cfg       *config.Config
@@ -102,10 +106,14 @@ func NewRemote(cfg *config.Config, cfgPath, version string, stream *remote.Clien
 	return m
 }
 
+// programOptions are applied to every bubbletea program wrongtop starts;
+// tests swap in a headless input/output so Run executes end to end.
+var programOptions []tea.ProgramOption
+
 // RunRemote starts the wrongtop TUI fed by a remote stream; a reader
 // goroutine pushes snapshots into the event loop.
 func RunRemote(cfg *config.Config, cfgPath, version string, stream *remote.Client, addr string) error {
-	program := tea.NewProgram(NewRemote(cfg, cfgPath, version, stream, addr))
+	program := tea.NewProgram(NewRemote(cfg, cfgPath, version, stream, addr), programOptions...)
 	go func() {
 		for {
 			snap, err := stream.Next()
@@ -170,7 +178,7 @@ func (m *Model) setActive(i int) {
 
 // Run starts the wrongtop TUI.
 func Run(cfg *config.Config, cfgPath, version string) error {
-	_, err := tea.NewProgram(New(cfg, cfgPath, version)).Run()
+	_, err := tea.NewProgram(New(cfg, cfgPath, version), programOptions...).Run()
 	return err
 }
 
@@ -279,7 +287,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.Client == nil && msg.Err != nil {
 			// daemon absent or down — retry after a pause
-			return m, tea.Tick(5*time.Second, func(time.Time) tea.Msg {
+			return m, tea.Tick(dockerRetryDelay, func(time.Time) tea.Msg {
 				return dockerRetryMsg{}
 			})
 		}

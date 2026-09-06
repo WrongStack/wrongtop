@@ -3,8 +3,11 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestLoadDefaults(t *testing.T) {
@@ -151,5 +154,128 @@ func TestLoadInvalidKeysFallBack(t *testing.T) {
 	}
 	if cfg.Keys.Filter != "/" {
 		t.Errorf("reserved filter should fall back to /, got %q", cfg.Keys.Filter)
+	}
+}
+
+func TestPathResolution(t *testing.T) {
+	t.Run("env override wins", func(t *testing.T) {
+		envPath := filepath.Join(t.TempDir(), "custom.yaml")
+		t.Setenv("WRONGTOP_CONFIG", envPath)
+		if got := Path(); got != envPath {
+			t.Errorf("Path() = %q, want %q", got, envPath)
+		}
+	})
+	t.Run("home default", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("WRONGTOP_CONFIG", "")
+		t.Setenv("HOME", home)
+		want := filepath.Join(home, ".config", "wrongtop", "config.yaml")
+		if got := Path(); got != want {
+			t.Errorf("Path() = %q, want %q", got, want)
+		}
+	})
+	t.Run("no home yields empty", func(t *testing.T) {
+		t.Setenv("WRONGTOP_CONFIG", "")
+		t.Setenv("HOME", "")
+		if got := Path(); got != "" {
+			t.Errorf("Path() with no home = %q, want empty", got)
+		}
+	})
+}
+
+// TestLoadNoLocation covers Load("") when even the default path is
+// unavailable: the built-in defaults come back untouched.
+func TestLoadNoLocation(t *testing.T) {
+	t.Setenv("WRONGTOP_CONFIG", "")
+	t.Setenv("HOME", "")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Theme != "tokyo-night" {
+		t.Errorf("theme: %q", cfg.Theme)
+	}
+	if cfg.Refresh.D() != time.Second {
+		t.Errorf("refresh: %v", cfg.Refresh.D())
+	}
+}
+
+// TestLoadReadError covers read failures that are not "file missing":
+// reading a directory fails with EISDIR.
+func TestLoadReadError(t *testing.T) {
+	cfg, err := Load(t.TempDir())
+	if err == nil {
+		t.Fatal("reading a directory should error")
+	}
+	if cfg != nil {
+		t.Errorf("config should be nil on read error, got %+v", cfg)
+	}
+	if !strings.Contains(err.Error(), "wrongtop: reading config") {
+		t.Errorf("error = %v, want reading-config prefix", err)
+	}
+}
+
+// TestUnmarshalYAMLRejectsNonString pins the Duration decoder: a YAML
+// node that is not a string must fail inside node.Decode.
+func TestUnmarshalYAMLRejectsNonString(t *testing.T) {
+	for _, doc := range []string{"12\n", "true\n", "- 1s\n- 2s\n", "a: b\n"} {
+		var d Duration
+		if err := yaml.Unmarshal([]byte(doc), &d); err == nil {
+			t.Errorf("yaml %q should not decode into Duration", doc)
+		}
+	}
+	var d Duration
+	if err := yaml.Unmarshal([]byte("500ms\n"), &d); err != nil {
+		t.Fatalf("valid duration: %v", err)
+	}
+	if d.D() != 500*time.Millisecond {
+		t.Errorf("duration = %v, want 500ms", d.D())
+	}
+}
+
+func TestNormalizeClampsAndFallbacks(t *testing.T) {
+	cases := []struct {
+		name        string
+		refresh     time.Duration
+		theme       string
+		layout      string
+		border      string
+		wantRefresh time.Duration
+		wantTheme   string
+		wantLayout  string
+		wantBorder  string
+	}{
+		{"defaults kept", time.Second, "dracula", "compact", "square",
+			time.Second, "dracula", "compact", "square"},
+		{"slow refresh clamps", 11 * time.Second, "nord", "full", "rounded",
+			10 * time.Second, "nord", "full", "rounded"},
+		{"unknown layout falls back", time.Second, "nord", "bogus", "square",
+			time.Second, "nord", "full", "square"},
+		{"unknown border falls back", time.Second, "nord", "minimal", "bogus",
+			time.Second, "nord", "minimal", "rounded"},
+		{"empty theme falls back", time.Second, "", "minimal", "thick",
+			time.Second, "tokyo-night", "minimal", "thick"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := Default()
+			cfg.Refresh = Duration(tc.refresh)
+			cfg.Theme = tc.theme
+			cfg.Layout = tc.layout
+			cfg.Border = tc.border
+			cfg.normalize()
+			if cfg.Refresh.D() != tc.wantRefresh {
+				t.Errorf("refresh: got %v, want %v", cfg.Refresh.D(), tc.wantRefresh)
+			}
+			if cfg.Theme != tc.wantTheme {
+				t.Errorf("theme: got %q, want %q", cfg.Theme, tc.wantTheme)
+			}
+			if cfg.Layout != tc.wantLayout {
+				t.Errorf("layout: got %q, want %q", cfg.Layout, tc.wantLayout)
+			}
+			if cfg.Border != tc.wantBorder {
+				t.Errorf("border: got %q, want %q", cfg.Border, tc.wantBorder)
+			}
+		})
 	}
 }

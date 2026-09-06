@@ -3,6 +3,7 @@ package collector
 import (
 	"context"
 	"os/user"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -16,7 +17,6 @@ import (
 	"github.com/shirou/gopsutil/v4/mem"
 	"github.com/shirou/gopsutil/v4/net"
 	"github.com/shirou/gopsutil/v4/process"
-	"github.com/shirou/gopsutil/v4/sensors"
 )
 
 // hostIdentity is the slow-changing part of Host, fetched once.
@@ -185,9 +185,24 @@ func collectCPU(ctx context.Context) CPU {
 	return c
 }
 
+// platformTempsFn indirects the platform sensor hook so the shared
+// selection logic can be exercised on any machine.
+var platformTempsFn = platformTemps
+
 // sensorHints match CPU-relevant sensor names across vendors (coretemp,
 // k10temp, cpu_thermal, packageid, acpi, soc dts, ...).
 var sensorHints = []string{"cpu", "core", "thermal", "package", "k10temp", "acpi", "soc"}
+
+// sensorRelevant reports whether a sensor name matches a CPU hint.
+func sensorRelevant(name string) bool {
+	name = strings.ToLower(name)
+	for _, hint := range sensorHints {
+		if strings.Contains(name, hint) {
+			return true
+		}
+	}
+	return false
+}
 
 // collectSensors returns CPU-relevant temperature readings, hottest
 // first, capped at a handful. Readings of 0°C (missing data) are dropped;
@@ -195,43 +210,12 @@ var sensorHints = []string{"cpu", "core", "thermal", "package", "k10temp", "acpi
 // gopsutil yields nothing the platform hook gets a chance (AppleSMC on
 // darwin, ACPI thermal zones on windows).
 func collectSensors(ctx context.Context) []Sensor {
-	var out []Sensor
-	if gopsutilSensorsAvailable {
-		out = gopsutilSensors(ctx)
-	}
+	out := gopsutilSensors(ctx)
 	if len(out) == 0 {
-		out = platformTemps(ctx)
+		out = platformTempsFn(ctx)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].TempC > out[j].TempC })
 	return out[:min(len(out), 4)]
-}
-
-// gopsutilSensors collects CPU-relevant temperatures via gopsutil,
-// matching sensor names against the hints above.
-func gopsutilSensors(ctx context.Context) []Sensor {
-	temps, err := sensors.TemperaturesWithContext(ctx)
-	if err != nil && len(temps) == 0 {
-		return nil
-	}
-	var out []Sensor
-	for _, s := range temps {
-		if s.Temperature <= 0 {
-			continue
-		}
-		name := strings.ToLower(s.SensorKey)
-		relevant := false
-		for _, hint := range sensorHints {
-			if strings.Contains(name, hint) {
-				relevant = true
-				break
-			}
-		}
-		if !relevant {
-			continue
-		}
-		out = append(out, Sensor{Name: s.SensorKey, TempC: s.Temperature})
-	}
-	return out
 }
 
 // collectFreq returns the average current CPU clock in MHz, or 0 when the
@@ -274,6 +258,15 @@ func collectMem(ctx context.Context) Mem {
 // collectProcs lists all processes. Per-process CPU is diffed against the
 // previous poll; the first poll reports 0. Mem is the share of physical
 // memory in use, derived locally from RSS and the host total.
+// Bulk probes and the pid source are indirected for tests: the darwin
+// fast paths always succeed here, so the gopsutil fallback branches —
+// the only path on linux and windows — are exercised by stubbing.
+var (
+	readProcSysFn      = readProcSys
+	readAllProcUsageFn = readAllProcUsage
+	listPidsFn         = process.PidsWithContext
+)
+
 func (c *Collector) collectProcs(ctx context.Context, elapsed float64, memTotal uint64) []Proc {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -283,26 +276,43 @@ func (c *Collector) collectProcs(ctx context.Context, elapsed float64, memTotal 
 		c.users = make(map[int32]string)
 	}
 
+	// Bulk identity (darwin) and libproc usage sampling (darwin+cgo)
+	// replace the per-process gopsutil calls where available; nil maps
+	// mean "fall back to per-process gopsutil" below.
+	sys, _ := readProcSysFn()
+	usage, _ := readAllProcUsageFn()
+
 	// Pids + bare Process structs — deliberately NOT
 	// process.ProcessesWithContext: it wraps every pid in
 	// NewProcessWithContext, which eagerly probes CreateTime per process
 	// (a proc_pidinfo sweep that alone was ~47% of Collect) for a field
-	// wrongtop never reads.
-	pids, err := process.PidsWithContext(ctx)
-	if err != nil {
+	// wrongtop never reads. The bulk reads already carry the full pid
+	// table, so a separate PidsWithContext sweep only runs on fallback
+	// platforms.
+	var pids []int32
+	if sys != nil {
+		pids = make([]int32, 0, len(sys))
+		for pid := range sys {
+			pids = append(pids, pid)
+		}
+		slices.Sort(pids)
+	} else if list, err := listPidsFn(ctx); err == nil {
+		pids = list
+	} else {
 		return nil
 	}
 
-	// Bulk identity (darwin) and libproc usage sampling (darwin+cgo)
-	// replace the per-process gopsutil calls where available; nil maps
-	// mean "fall back to per-process gopsutil" below.
-	sys, _ := readProcSys()
-	usage, _ := readAllProcUsage()
-
-	next := make(map[int32]float64, len(pids))
+	// lastCPU is reused in place — no map allocation on a stable process
+	// table. It is rebuilt only when churn leaves it meaningfully larger
+	// than the live table, so exited-pid capacity is not kept forever.
+	next := c.lastCPU
+	if next == nil {
+		next = make(map[int32]float64, len(pids))
+	}
 	out := make([]Proc, 0, len(pids))
+	var p process.Process // gopsutil handle, reset per pid: only fallback paths touch it
 	for _, pid := range pids {
-		p := &process.Process{Pid: pid}
+		p = process.Process{Pid: pid}
 		var pr Proc
 		pr.PID = pid
 		s, hasSys := sys[pid]
@@ -327,25 +337,32 @@ func (c *Collector) collectProcs(ctx context.Context, elapsed float64, memTotal 
 		}
 
 		if u, has := usage[pid]; has {
-			// libproc fast path for the unit-free metrics: name, RSS,
-			// threads (CPU time stays on gopsutil Times below — the
-			// rusage_info time fields are undocumented scheduler ticks)
+			// libproc fast path: name, RSS, threads, and CPU seconds
+			// straight from proc_taskinfo — the same counters gopsutil's
+			// Times path converts, minus a per-process dlopen + ProcPidInfo
+			// round trip
 			pr.RSS = u.RSS
 			pr.Mem = memPercent(u.RSS, memTotal)
 			pr.Threads = u.Threads
 			if pr.Name == "" {
 				pr.Name = u.Name
 			}
-		}
-		if t, err := p.TimesWithContext(ctx); err == nil {
-			total := t.User + t.System
 			if prev, ok := c.lastCPU[pid]; ok && elapsed > 0 {
-				pr.CPU = max(0, (total-prev)/elapsed*100)
+				pr.CPU = max(0, (u.CPUSecs-prev)/elapsed*100)
 			}
-			next[pid] = total
-		}
-		if usage == nil {
-			// gopsutil fallbacks for the fast-path metrics
+			next[pid] = u.CPUSecs
+		} else if usage == nil {
+			// gopsutil fallbacks for the fast-path metrics. A pid the fast
+			// path rejected is deliberately NOT retried here: task info is
+			// unreadable for it, and gopsutil would burn the same syscall
+			// to learn the same thing.
+			if t, err := p.TimesWithContext(ctx); err == nil {
+				total := t.User + t.System
+				if prev, ok := c.lastCPU[pid]; ok && elapsed > 0 {
+					pr.CPU = max(0, (total-prev)/elapsed*100)
+				}
+				next[pid] = total
+			}
 			if mi, err := p.MemoryInfoWithContext(ctx); err == nil {
 				pr.RSS = mi.RSS
 				pr.Mem = memPercent(mi.RSS, memTotal)
@@ -367,6 +384,15 @@ func (c *Collector) collectProcs(ctx context.Context, elapsed float64, memTotal 
 		out = append(out, pr)
 	}
 
+	if len(next) > len(pids)+len(pids)/4 {
+		fresh := make(map[int32]float64, len(pids))
+		for _, pid := range pids {
+			if v, ok := next[pid]; ok {
+				fresh[pid] = v
+			}
+		}
+		next = fresh
+	}
 	c.lastCPU = next
 	return out
 }

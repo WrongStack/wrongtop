@@ -73,3 +73,34 @@ func TestSortKeyCycle(t *testing.T) {
 		t.Fatal("unexpected display names")
 	}
 }
+
+func TestSortKeyString(t *testing.T) {
+	cases := []struct {
+		k    SortKey
+		want string
+	}{
+		{SortCPU, "cpu"},
+		{SortMem, "mem"},
+		{SortPID, "pid"},
+		{SortName, "name"},
+		{SortUser, "user"},
+		{SortKey(42), "?"}, // out-of-range keys must not panic
+	}
+	for _, c := range cases {
+		if got := c.k.String(); got != c.want {
+			t.Errorf("SortKey(%d).String() = %q, want %q", c.k, got, c.want)
+		}
+	}
+}
+
+func TestSortMem(t *testing.T) {
+	procs := sample()
+	Sort(procs, SortMem, false) // asc
+	if procs[0].Name != "configd" || procs[3].Name != "Code" {
+		t.Fatalf("mem asc: got %s first, want configd", procs[0].Name)
+	}
+	Sort(procs, SortMem, true) // desc
+	if procs[0].Name != "Code" {
+		t.Fatalf("mem desc: got %s first, want Code", procs[0].Name)
+	}
+}

@@ -1,8 +1,10 @@
 package format
 
 import (
+	"math"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRateFixedStableWidth(t *testing.T) {
@@ -32,5 +34,100 @@ func TestRate(t *testing.T) {
 	}
 	if got := Rate(340e3); got != "340.0 Kb/s" {
 		t.Errorf("Rate = %q", got)
+	}
+}
+
+func TestBytes(t *testing.T) {
+	cases := []struct {
+		n    uint64
+		want string
+	}{
+		{0, "0 B"},
+		{1, "1 B"},
+		{1023, "1023 B"},
+		{1024, "1.0 KiB"},
+		{1536, "1.5 KiB"},
+		{100 * 1024, "100.0 KiB"},
+		{1 << 20, "1.0 MiB"},
+		{1 << 30, "1.0 GiB"},
+		{1 << 40, "1.0 TiB"},
+		{1 << 50, "1.0 PiB"},
+		{1 << 60, "1.0 EiB"},
+		{math.MaxUint64, "16.0 EiB"},
+	}
+	for _, c := range cases {
+		if got := Bytes(c.n); got != c.want {
+			t.Errorf("Bytes(%d) = %q, want %q", c.n, got, c.want)
+		}
+	}
+}
+
+func TestBytesCompact(t *testing.T) {
+	cases := []struct {
+		n    uint64
+		want string
+	}{
+		{0, "0 B"},
+		{1023, "1023 B"},
+		{1024, "1.0 KiB"},
+		{99 * 1024, "99.0 KiB"},
+		{200 * 1024, "200 KiB"}, // >= 100 of the unit: decimal dropped
+		{1 << 20, "1.0 MiB"},
+		{512 << 20, "512 MiB"},
+		{1 << 40, "1.0 TiB"},
+		{3 << 50, "3.0 PiB"},
+	}
+	for _, c := range cases {
+		if got := BytesCompact(c.n); got != c.want {
+			t.Errorf("BytesCompact(%d) = %q, want %q", c.n, got, c.want)
+		}
+	}
+}
+
+func TestCPUPct(t *testing.T) {
+	cases := []struct {
+		v    float64
+		want string
+	}{
+		{0, "  0.0"},
+		{3.5, "  3.5"},
+		{99.9, " 99.9"},
+		{-4.25, " -4.2"},
+		{math.NaN(), "  NaN"},
+		{100, "  100"},
+		{123.45, "  123"},
+		{999.9, " 1000"},
+		{1000, " 999+"},
+		{9876.5, " 999+"},
+	}
+	for _, c := range cases {
+		if got := CPUPct(c.v); got != c.want {
+			t.Errorf("CPUPct(%v) = %q, want %q", c.v, got, c.want)
+		}
+	}
+}
+
+func TestUptime(t *testing.T) {
+	cases := []struct {
+		d    time.Duration
+		want string
+	}{
+		{0, "0s"},
+		{45 * time.Second, "45s"},
+		{60 * time.Second, "1m"},
+		{90 * time.Second, "1m"},
+		{59 * time.Minute, "59m"},
+		{time.Hour, "1h 0m"},
+		{90 * time.Minute, "1h 30m"},
+		{23*time.Hour + 59*time.Minute, "23h 59m"},
+		{24 * time.Hour, "1d 0h"},
+		{25 * time.Hour, "1d 1h"},
+		{3*24*time.Hour + 4*time.Hour, "3d 4h"},
+		{14 * 24 * time.Hour, "14d 0h"},
+	}
+	for _, c := range cases {
+		if got := Uptime(c.d); got != c.want {
+			t.Errorf("Uptime(%v) = %q, want %q", c.d, got, c.want)
+		}
 	}
 }

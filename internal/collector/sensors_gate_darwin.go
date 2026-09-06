@@ -2,7 +2,9 @@
 
 package collector
 
-// gopsutilSensorsAvailable is false on darwin: gopsutil's sensor probe
+import "context"
+
+// gopsutilSensors is compiled out on darwin: gopsutil's sensor probe
 // costs ~50ms per call there and yields nothing — the AppleSMC reader
 // (platformTemps) is both faster and better.
-const gopsutilSensorsAvailable = false
+func gopsutilSensors(context.Context) []Sensor { return nil }

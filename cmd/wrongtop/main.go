@@ -29,6 +29,15 @@ var (
 	dumpCount    int
 )
 
+// Process-level effects are indirected so the command tree can run end to
+// end in tests without a terminal or a real exit.
+var (
+	osExit      = os.Exit
+	runApp      = app.Run
+	runRemote   = app.RunRemote
+	serveRemote = remote.Serve
+)
+
 // resolveConfigPath returns the -c flag value or the default location.
 func resolveConfigPath(cmd *cobra.Command) string {
 	path := cmd.Flag("config").Value.String()
@@ -38,22 +47,20 @@ func resolveConfigPath(cmd *cobra.Command) string {
 	return path
 }
 
-func main() {
+// newRootCmd builds the full command tree.
+func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:          "wrongtop",
 		Short:        "A cross-platform terminal system monitor",
 		Long:         "WrongTop is a terminal system monitor for macOS, Linux and Windows.\nIt watches CPU, memory, processes, disks, network and Docker containers.",
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			path := cmd.Flag("config").Value.String()
-			if path == "" {
-				path = config.Path()
-			}
+			path := resolveConfigPath(cmd)
 			cfg, err := config.Load(path)
 			if err != nil {
 				return err
 			}
-			return app.Run(cfg, path, version)
+			return runApp(cfg, path, version)
 		},
 	}
 
@@ -65,7 +72,7 @@ func main() {
 		Use:   "version",
 		Short: "Print the version",
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Println("wrongtop", version)
+			fmt.Fprintln(cmd.OutOrStdout(), "wrongtop", version)
 		},
 	})
 
@@ -73,7 +80,7 @@ func main() {
 		Use:   "config-sample",
 		Short: "Print an annotated sample config file",
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Print(config.Sample)
+			fmt.Fprint(cmd.OutOrStdout(), config.Sample)
 		},
 	})
 
@@ -86,7 +93,7 @@ func main() {
 			if err != nil {
 				return err
 			}
-			return remote.Serve(context.Background(), remote.Options{
+			return serveRemote(cmd.Context(), remote.Options{
 				Listen:  serveListen,
 				Token:   serveToken,
 				Refresh: cfg.Refresh.D(),
@@ -108,13 +115,13 @@ func main() {
 			if err != nil {
 				return err
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
 			stream, err := remote.Dial(ctx, args[0], connectToken, version)
 			if err != nil {
 				return err
 			}
-			return app.RunRemote(cfg, path, version, stream, args[0])
+			return runRemote(cfg, path, version, stream, args[0])
 		},
 	}
 	connect.Flags().StringVar(&connectToken, "token", os.Getenv("WRONGTOP_TOKEN"),
@@ -129,10 +136,10 @@ func main() {
 			if err != nil {
 				return err
 			}
-			ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+			ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			defer cancel()
 			coll := collector.New(cfg.Refresh.D())
-			enc := json.NewEncoder(os.Stdout)
+			enc := json.NewEncoder(cmd.OutOrStdout())
 			for i := 0; dumpCount <= 0 || i < dumpCount; i++ {
 				if err := enc.Encode(coll.Collect(ctx)); err != nil {
 					return err
@@ -149,8 +156,11 @@ func main() {
 	dump.Flags().IntVar(&dumpCount, "count", 1, "number of snapshots (0 = until interrupted)")
 
 	root.AddCommand(serve, connect, dump)
+	return root
+}
 
-	if err := root.Execute(); err != nil {
-		os.Exit(1)
+func main() {
+	if err := newRootCmd().Execute(); err != nil {
+		osExit(1)
 	}
 }

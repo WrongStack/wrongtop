@@ -7,6 +7,10 @@ import (
 	"time"
 )
 
+// probeGPUsFn indirects the platform probe so the cache/back-off logic
+// can be exercised on machines without GPU reporting.
+var probeGPUsFn = probeGPUs
+
 // collectGPUs returns cached GPU readings, sampling through the platform
 // hook at the GPU cadence. A failed probe (no NVIDIA driver, no adapter)
 // backs off briefly so absent hardware costs nothing per tick.
@@ -28,7 +32,7 @@ func (c *Collector) collectGPUs(ctx context.Context, now time.Time) []GPU {
 		return c.cachedGPUs
 	}
 	c.lastGPU = now
-	gpus, err := probeGPUs(ctx)
+	gpus, err := probeGPUsFn(ctx)
 	if err != nil || len(gpus) == 0 {
 		c.gpuFailed = true
 		c.cachedGPUs = nil

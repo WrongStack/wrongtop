@@ -63,10 +63,7 @@ func BenchmarkReadBattery(b *testing.B) {
 }
 
 // TestLiveProcUsageFields validates the fast path's unit-free metrics
-// against our own process. CPU time is deliberately NOT checked here:
-// rusage_info time fields are undocumented scheduler ticks (measured
-// 24,000,000 per CPU-second on Apple Silicon), so CPU stays on the
-// gopsutil Times path which uses known units.
+// against our own process.
 func TestLiveProcUsageFields(t *testing.T) {
 	usage, err := readAllProcUsage()
 	if err != nil {
@@ -83,4 +80,41 @@ func TestLiveProcUsageFields(t *testing.T) {
 		t.Errorf("self threads = %d, want >= 1", self.Threads)
 	}
 	t.Logf("self: name=%q rss=%dMiB threads=%d", self.Name, self.RSS>>20, self.Threads)
+}
+
+// TestLiveProcCPUSeconds proves the fast path's CPU seconds carry real
+// units: a busy loop burns roughly one CPU-second per wall second, and
+// the proc_taskinfo delta must agree. Guards against a macOS revision
+// changing the counter's timebase out from under the conversion.
+func TestLiveProcCPUSeconds(t *testing.T) {
+	const burn = 150 * time.Millisecond
+	before, err := readAllProcUsage()
+	if err != nil {
+		t.Skipf("fast path unavailable: %v", err)
+	}
+	self := int32(os.Getpid())
+	b0, ok := before[self]
+	if !ok {
+		t.Skip("self not found in the pid list")
+	}
+
+	start := time.Now()
+	for time.Since(start) < burn { // single-goroutine busy loop: cpu ≈ wall
+	}
+	elapsed := time.Since(start)
+
+	after, err := readAllProcUsage()
+	if err != nil {
+		t.Fatalf("second read: %v", err)
+	}
+	a1, ok := after[self]
+	if !ok {
+		t.Fatal("self exited the pid list mid-test")
+	}
+
+	burned := a1.CPUSecs - b0.CPUSecs
+	if burned < 0.5*elapsed.Seconds() || burned > 1.5*elapsed.Seconds() {
+		t.Fatalf("cpu delta = %.3fs for %.3fs busy wall — units are wrong", burned, elapsed.Seconds())
+	}
+	t.Logf("burned %.3fs cpu over %.3fs wall — units check out", burned, elapsed.Seconds())
 }

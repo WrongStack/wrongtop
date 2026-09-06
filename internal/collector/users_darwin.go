@@ -18,10 +18,14 @@ const (
 	utmpxUserProcess = 7
 )
 
+// utmpxPath is indirected for tests: the real database only exists on a
+// live multi-user system.
+var utmpxPath = "/var/run/utmpx"
+
 // countUsers returns the number of distinct logged-in users from the
 // utmpx database.
 func countUsers() int {
-	raw, err := os.ReadFile("/var/run/utmpx")
+	raw, err := os.ReadFile(utmpxPath)
 	if err != nil {
 		return 0
 	}
