@@ -144,6 +144,9 @@ func newRootCmd() *cobra.Command {
 				if err := enc.Encode(coll.Collect(ctx)); err != nil {
 					return err
 				}
+				if dumpCount > 0 && i+1 >= dumpCount {
+					return nil // last requested snapshot: no pacing sleep after it
+				}
 				select {
 				case <-ctx.Done():
 					return nil
