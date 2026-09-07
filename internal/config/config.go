@@ -217,6 +217,12 @@ func validKeyOverride(s string) bool {
 		return false
 	case 't', 'T': // reserved: tree toggle; the key switch matches "t"
 		return false // before the configured kill/filter cases
+	case 'a', 'A': // reserved: alerts overlay; globalKey consumes "a"
+		return false // before the tabs dispatch
+	case 'q', 'Q': // reserved: quit; globalKey consumes "q"
+		return false
+	case 'r', 'R': // reserved: live config reload; globalKey consumes "R"
+		return false
 	}
 	return true
 }
