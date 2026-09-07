@@ -99,6 +99,12 @@ func Dial(ctx context.Context, addr, token, version string) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Bound the handshake by the caller's context: closing the conn
+	// unblocks a stalled auth write or hello read, so a deadline or
+	// cancel still fires after the TCP dial has succeeded. stop() runs
+	// before return, so a live post-handshake stream is never closed.
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stop()
 	c := &Client{conn: conn}
 	if err := WriteFrame(conn, Auth{Token: token}); err != nil {
 		_ = conn.Close()

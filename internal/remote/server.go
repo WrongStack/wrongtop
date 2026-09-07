@@ -66,7 +66,18 @@ func Serve(ctx context.Context, opts Options) error {
 
 	go func() {
 		<-ctx.Done()
-		_ = ln.Close()
+		_ = ln.Close() // unblocks Accept so Serve can return
+		// End every connected stream: closing each client's channel
+		// finishes its handleConn range loop, which unregisters and
+		// closes the conn. Race-free against broadcast and register:
+		// all three hold mu for their whole critical section, and the
+		// register hook refuses once ctx is done.
+		mu.Lock()
+		defer mu.Unlock()
+		for ch := range clients {
+			delete(clients, ch)
+			close(ch)
+		}
 	}()
 
 	// one initial sample fills the Hello hostname before clients arrive

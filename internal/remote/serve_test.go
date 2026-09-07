@@ -3,8 +3,10 @@ package remote
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -191,6 +193,56 @@ func TestServeDropsSlowClient(t *testing.T) {
 	}
 	cancel()
 	awaitServeError(t, errCh)
+}
+
+// TestServeShutdownEndsClientStreams pins the shutdown sweep: after the
+// context is cancelled and Serve returns, every connected client's
+// stream must end — the sweep closes each client's channel so its
+// handleConn loop unregisters and closes the conn instead of parking on
+// `range ch` forever and leaking the goroutine and conn.
+func TestServeShutdownEndsClientStreams(t *testing.T) {
+	addr := freeListenAddr(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := startServe(ctx, t, addr, "secret", 250*time.Millisecond)
+
+	// The probe proves Serve is accepting and streaming before the
+	// clients under test dial.
+	probe := dialRetry(t, addr)
+	defer func() { _ = probe.Close() }()
+	authorize(t, probe, "secret")
+
+	var clients []*Client
+	for i := 0; i < 2; i++ {
+		c, err := Dial(ctx, addr, "secret", "test")
+		if err != nil {
+			t.Fatalf("dial client %d: %v", i, err)
+		}
+		defer c.Close()
+		clients = append(clients, c)
+		if _, err := c.Next(); err != nil { // one real snapshot proves the stream is live
+			t.Fatalf("client %d received no snapshot: %v", i, err)
+		}
+	}
+
+	cancel()
+	awaitServeError(t, errCh)
+
+	// Every connected client must observe the stream ending promptly:
+	// buffered snapshots (cap 4) may still arrive after the sweep, then
+	// the closed channel ends the stream with a read error. A deadline
+	// timeout means the channel was never closed — the leak this pins.
+	for i, c := range clients {
+		_ = c.conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		for {
+			if _, err := c.Next(); err != nil {
+				if errors.Is(err, os.ErrDeadlineExceeded) {
+					t.Fatalf("client %d still streaming 5s after Serve returned: its channel was never closed", i)
+				}
+				break // stream ended — the sweep closed the channel
+			}
+		}
+	}
 }
 
 // The tests below drive handleConn directly over net.Pipe for precise

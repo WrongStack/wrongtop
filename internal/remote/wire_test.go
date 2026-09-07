@@ -8,6 +8,7 @@ import (
 	"net"
 	"strings"
 	"testing"
+	"time"
 )
 
 // errWriter fails every write with the given error.
@@ -149,5 +150,48 @@ func TestNextAfterClose(t *testing.T) {
 	defer client.Close()
 	if _, err := client.Next(); err == nil {
 		t.Fatal("Next on a closed stream returned no error")
+	}
+}
+
+// TestDialHandshakeDeadline pins the handshake context bound: a server
+// that accepts and consumes the auth frame but never answers must not
+// block Dial past the caller's deadline — `wrongtop connect` wraps Dial
+// in a 10s WithTimeout that has to be able to fire.
+func TestDialHandshakeDeadline(t *testing.T) {
+	addr := startFakeServer(t, func(conn net.Conn) {
+		defer func() { _ = conn.Close() }()
+		_, _ = io.Copy(io.Discard, conn) // stall: drain, never answer
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+
+	type dialResult struct{ err error }
+	done := make(chan dialResult, 1)
+	go func() {
+		_, err := Dial(ctx, addr, "token", "test")
+		done <- dialResult{err: err}
+	}()
+	select {
+	case res := <-done:
+		if res.err == nil {
+			t.Fatal("Dial succeeded against a silent server")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Dial ignored the context deadline: still blocked 5s after a 250ms deadline")
+	}
+}
+
+// TestDialCancelledContext covers the no-deadline boundary: an
+// already-cancelled context must fail Dial immediately, not dial and
+// then stream on a cancelled context.
+func TestDialCancelledContext(t *testing.T) {
+	addr := startFakeServer(t, func(conn net.Conn) {
+		defer func() { _ = conn.Close() }()
+		_, _ = io.Copy(io.Discard, conn)
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := Dial(ctx, addr, "token", "test"); err == nil {
+		t.Fatal("Dial succeeded with an already-cancelled context")
 	}
 }

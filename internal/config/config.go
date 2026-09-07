@@ -215,6 +215,8 @@ func validKeyOverride(s string) bool {
 	switch r[0] {
 	case 's', 'S': // reserved: sort cycle / reverse order
 		return false
+	case 't', 'T': // reserved: tree toggle; the key switch matches "t"
+		return false // before the configured kill/filter cases
 	}
 	return true
 }
