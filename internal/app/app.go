@@ -100,6 +100,7 @@ type Model struct {
 // Docker is unavailable remotely and the view is read-only.
 func NewRemote(cfg *config.Config, cfgPath, version string, stream *remote.Client, addr string) *Model {
 	cfg.Modules.Docker = false
+	cfg.ReadOnly = true // remote pids are not local pids: no signaling, no local cmdline
 	m := New(cfg, cfgPath, version)
 	m.stream = stream
 	m.remoteAddr = addr

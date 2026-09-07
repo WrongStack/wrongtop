@@ -79,6 +79,9 @@ func TestRemoteModelDisablesLocalPolling(t *testing.T) {
 	if cfg.Modules.Docker {
 		t.Error("remote mode must disable docker")
 	}
+	if !cfg.ReadOnly {
+		t.Error("remote mode must be read-only: remote pids must never be signaled locally")
+	}
 	if m.Init() != nil {
 		t.Error("remote Init must not schedule local collection")
 	}
