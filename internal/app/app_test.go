@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/wrongstack/wrongtop/internal/collector"
 	"github.com/wrongstack/wrongtop/internal/config"
@@ -51,6 +52,28 @@ func TestStatusBarShowsDynamicTabRange(t *testing.T) {
 	out := m.statusBarView()
 	if !strings.Contains(out, "1-3") {
 		t.Errorf("status bar missing dynamic tab range 1-3: %q", out)
+	}
+}
+
+// TestAlertsOverlayBoundedToTerminal pins the alerts overlay
+// containment: event text carries snapshot values (the remote wire can
+// deliver extremes) and the overlay box grows to fit its content, so
+// every history line must be truncated to the terminal width — a
+// hostile snapshot must not wrap the fixed-height frame.
+func TestAlertsOverlayBoundedToTerminal(t *testing.T) {
+	m := New(config.Default(), "", "test")
+	m.width = 120
+	snap := collector.Snapshot{Time: time.Now()}
+	snap.CPU.Percent = 1e300
+	snap.Mem.Percent = 1e300
+	m.trackAlerts(snap)
+	if len(m.alerts) == 0 {
+		t.Fatal("extreme snapshot produced no alerts")
+	}
+	for i, line := range strings.Split(m.alertsOverlayView(), "\n") {
+		if w := lipgloss.Width(line); w > m.width {
+			t.Fatalf("alerts overlay line %d is %d cells wide, want <= %d", i, w, m.width)
+		}
 	}
 }
 

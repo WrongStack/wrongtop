@@ -11,6 +11,7 @@ import (
 
 	"charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/wrongstack/wrongtop/internal/collector"
 	"github.com/wrongstack/wrongtop/internal/config"
@@ -554,9 +555,17 @@ func (m *Model) alertsOverlayView() string {
 		} else {
 			marker = "·"
 		}
-		b.WriteString(ev.Start.Format("15:04:05") + "  " +
+		line := ev.Start.Format("15:04:05") + "  " +
 			style.Render(marker+" "+ev.Text) +
-			st.Muted.Render(fmt.Sprintf("  [%s]", dur.Round(time.Second))))
+			st.Muted.Render(fmt.Sprintf("  [%s]", dur.Round(time.Second)))
+		// Event text carries snapshot values (the remote wire can
+		// deliver extremes), so bound each history line to the
+		// terminal — the same containment the tab-bar chips and the
+		// status bar apply.
+		if limit := m.width - 6; limit > 20 { // box borders + shadow margin
+			line = ansi.Truncate(line, limit, "")
+		}
+		b.WriteString(line)
 		if b.Len() > 0 {
 			b.WriteString("\n")
 		}
