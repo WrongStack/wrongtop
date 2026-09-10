@@ -1,6 +1,7 @@
 package sensors
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -160,6 +161,31 @@ func TestUpdateIgnoresOtherMessages(t *testing.T) {
 	}
 	if out := m.View(); !strings.Contains(out, "waiting for samples…") {
 		t.Errorf("view must still wait for samples:\n%s", out)
+	}
+}
+
+// TestUpdateBoundsChurnedHistoryMaps pins the churn bound on the sensor
+// and fan history maps: their keys come from the snapshot (the remote
+// wire delivers arbitrary name sets), so like the io histories the maps
+// must reset past 128 entries instead of growing without limit.
+func TestUpdateBoundsChurnedHistoryMaps(t *testing.T) {
+	m := newModel(t, 110, 34)
+	const snaps, names = 100, 100
+	for i := 0; i < snaps; i++ {
+		snap := collector.Snapshot{}
+		for j := 0; j < names; j++ {
+			snap.Sensors = append(snap.Sensors,
+				collector.Sensor{Name: fmt.Sprintf("temp%d-%d", i, j), TempC: 50})
+			snap.Fans = append(snap.Fans,
+				collector.Fan{Name: fmt.Sprintf("fan%d-%d", i, j), RPM: 1200})
+		}
+		m.Update(collector.SnapshotMsg{Snap: snap})
+	}
+	if len(m.tempHist) > 128+names {
+		t.Errorf("tempHist grew to %d entries; churn must be bounded", len(m.tempHist))
+	}
+	if len(m.fanHist) > 128+names {
+		t.Errorf("fanHist grew to %d entries; churn must be bounded", len(m.fanHist))
 	}
 }
 

@@ -80,6 +80,15 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 	case collector.SnapshotMsg:
 		m.snap = msg.Snap
 		m.live = true
+		// Sensor and fan label churn (hwmon re-enumeration, remote
+		// snapshots) must not grow the history maps without limit —
+		// the same bound the io histories apply to device names.
+		if len(m.tempHist) > 128 {
+			m.tempHist = make(map[string]*canvas.Graph)
+		}
+		if len(m.fanHist) > 128 {
+			m.fanHist = make(map[string][]float64)
+		}
 		w := m.graphW()
 		for _, s := range m.snap.Sensors {
 			g, ok := m.tempHist[s.Name]
