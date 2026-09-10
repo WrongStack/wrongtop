@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"github.com/wrongstack/wrongtop/internal/collector"
 	"github.com/wrongstack/wrongtop/internal/config"
 	"github.com/wrongstack/wrongtop/internal/dockerclient"
+	"github.com/wrongstack/wrongtop/internal/ui"
 )
 
 func TestNewTabsRespectModules(t *testing.T) {
@@ -74,6 +76,45 @@ func TestAlertsOverlayBoundedToTerminal(t *testing.T) {
 		if w := lipgloss.Width(line); w > m.width {
 			t.Fatalf("alerts overlay line %d is %d cells wide, want <= %d", i, w, m.width)
 		}
+	}
+}
+
+// TestRemoteLostBannerReplacesStatus pins the end-of-stream contract for
+// remote mode: a dead stream must stay visible instead of fading with a
+// 3-second flash. The status bar becomes a persistent connection-lost
+// banner carrying the frozen-at time and the stream error, bounded to
+// the terminal width; local mode is unaffected.
+func TestRemoteLostBannerReplacesStatus(t *testing.T) {
+	m := NewRemote(config.Default(), "", "test", nil, "host:1234")
+	m.width = 120
+	m.latest = collector.Snapshot{Time: time.Date(2026, 9, 10, 15, 4, 5, 0, time.Local)}
+	if _, err := m.Update(remoteEndedMsg{err: errors.New("connection reset by peer")}); err != nil {
+		t.Fatalf("Update(remoteEndedMsg): %v", err)
+	}
+	if m.flash != "" {
+		t.Errorf("end-of-stream must not rely on the transient flash, got %q", m.flash)
+	}
+	bar := m.statusBarView()
+	plain := ui.StripANSI(bar)
+	if !strings.Contains(plain, "REMOTE DISCONNECTED") {
+		t.Errorf("status bar missing the connection-lost banner: %q", plain)
+	}
+	if !strings.Contains(plain, "15:04:05") {
+		t.Errorf("banner missing the frozen-at time: %q", plain)
+	}
+	if !strings.Contains(plain, "connection reset by peer") {
+		t.Errorf("banner missing the stream error: %q", plain)
+	}
+	for i, line := range strings.Split(bar, "\n") {
+		if w := lipgloss.Width(line); w > m.width {
+			t.Fatalf("banner line %d is %d cells wide, want <= %d", i, w, m.width)
+		}
+	}
+
+	local := New(config.Default(), "", "test")
+	local.width = 120
+	if out := ui.StripANSI(local.statusBarView()); strings.Contains(out, "REMOTE DISCONNECTED") {
+		t.Errorf("local status bar must not show the banner: %q", out)
 	}
 }
 

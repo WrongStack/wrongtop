@@ -156,12 +156,12 @@ func TestUpdateRouting(t *testing.T) {
 	}
 
 	m.Update(remoteEndedMsg{errors.New("boom")})
-	if m.flash != "remote stream ended: boom" {
-		t.Errorf("flash = %q", m.flash)
+	if !m.remoteLost || m.flash != "" {
+		t.Errorf("stream end must arm the persistent banner, not the flash (lost=%v flash=%q)", m.remoteLost, m.flash)
 	}
 	m.Update(remoteEndedMsg{})
-	if m.flash != "remote stream ended" {
-		t.Errorf("flash = %q", m.flash)
+	if !m.remoteLost {
+		t.Error("stream end must arm the connection-lost banner")
 	}
 
 	if _, cmd := m.Update(dockerRetryMsg{}); cmd == nil {

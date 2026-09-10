@@ -90,9 +90,12 @@ type Model struct {
 	flashUntil time.Time
 
 	// remote monitoring: when stream is set, snapshots arrive from a
-	// server and local collection is disabled entirely.
-	stream     *remote.Client
-	remoteAddr string
+	// server and local collection is disabled entirely. Once the stream
+	// ends, the status bar becomes a persistent connection-lost banner.
+	stream          *remote.Client
+	remoteAddr      string
+	remoteLost      bool
+	remoteLostError error
 
 	latest collector.Snapshot // most recent sample, for the status bar
 }
@@ -256,11 +259,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 
 	case remoteEndedMsg:
-		if msg.err != nil {
-			m.setFlash("remote stream ended: " + msg.err.Error())
-		} else {
-			m.setFlash("remote stream ended")
-		}
+		// A dead stream must stay visible: the status bar becomes a
+		// persistent connection-lost banner (the old flash faded after
+		// 3s, leaving a silent freeze on stale data). The frozen data
+		// stays inspectable; q quits.
+		m.remoteLost = true
+		m.remoteLostError = msg.err
 		return m, nil
 
 	case dockerRetryMsg:
@@ -701,6 +705,9 @@ func (m *Model) tabBarRight() string {
 // hints collapse to the essentials and the lowest-priority chip drops
 // (battery → temperature → network) so the line never wraps.
 func (m *Model) statusBarView() string {
+	if m.remoteLost {
+		return m.remoteLostBar()
+	}
 	pal := m.theme.Palette
 	logo := m.chip(pal.Purple, "WRONGTOP")
 	left := logo + " " + m.theme.Styles.Muted.Render("v"+m.version)
@@ -733,6 +740,28 @@ func (m *Model) statusBarView() string {
 	half := gap / 2
 	return m.theme.Styles.Status.Render(left +
 		strings.Repeat(" ", half) + mid + strings.Repeat(" ", gap-half) + right)
+}
+
+// remoteLostBar replaces the status bar once the remote stream ends: a
+// frozen dashboard is only honest while the disconnection stays
+// visible, so the whole bar becomes a persistent crit banner instead of
+// a flash that fades after 3 seconds. The frozen data stays
+// inspectable; q quits.
+func (m *Model) remoteLostBar() string {
+	text := ui.Icon("warn", m.cfg.NerdFonts) + " REMOTE DISCONNECTED"
+	if !m.latest.Time.IsZero() {
+		text += " — data frozen at " + m.latest.Time.Format("15:04:05")
+	}
+	if m.remoteLostError != nil && m.remoteLostError.Error() != "" {
+		text += " · " + m.remoteLostError.Error()
+	}
+	if limit := m.width - 4; limit > 20 { // chip padding + a margin
+		text = ansi.Truncate(text, limit, "")
+	}
+	if pad := m.width - 2 - lipgloss.Width(text); pad > 0 {
+		text += strings.Repeat(" ", pad)
+	}
+	return m.chipT(m.theme.Palette.Red, text, 0.80)
 }
 
 // statusHints renders the right-hand key hints; the short form appears
