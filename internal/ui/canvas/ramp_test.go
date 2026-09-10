@@ -2,6 +2,7 @@ package canvas
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -48,6 +49,29 @@ func TestRampAt(t *testing.T) {
 	}
 }
 
+// TestAtEmitsValidHex pins the output contract across a full sweep:
+// every interpolated value must be a well-formed "#rrggbb" hex color,
+// because Theme.New and Theme.Soft feed At's result straight into
+// lipgloss.Color. Dark blends — a user theme with a black background —
+// once truncated to 5 hex digits whenever the red channel fell below
+// 0x10, silently dropping the derived color.
+func TestAtEmitsValidHex(t *testing.T) {
+	var hexShape = regexp.MustCompile(`^#[0-9a-f]{6}$`)
+	ramps := []Ramp{
+		{"#000000", "#1e1e1e"}, // user-theme pair: black bg, dark gray
+		{"#000000", "#ffffff"},
+		{"#102030", "#808080", "#ffffff"},
+	}
+	for _, r := range ramps {
+		for i := 0; i <= 200; i++ {
+			f := float64(i) / 200
+			if got := r.At(f); !hexShape.MatchString(got) {
+				t.Fatalf("At(%0.3f) on %v = %q, want a #rrggbb hex color", f, r, got)
+			}
+		}
+	}
+}
+
 func TestParseHex(t *testing.T) {
 	cases := []struct {
 		in    string
@@ -70,11 +94,23 @@ func TestParseHex(t *testing.T) {
 }
 
 func TestHexFormats(t *testing.T) {
-	if got := hex(255, 128, 0); got != "#ff8000" {
-		t.Errorf("hex(255,128,0) = %q, want #ff8000", got)
+	cases := []struct {
+		r, g, b uint8
+		want    string
+	}{
+		{255, 128, 0, "#ff8000"},
+		{16, 32, 48, "#102030"},
+		// red below 0x10 must keep its leading zero: a 5-digit hex is
+		// rejected by lipgloss, silently dropping the derived color
+		{0, 0, 0, "#000000"},
+		{1, 1, 1, "#010101"},
+		{14, 14, 14, "#0e0e0e"},
+		{15, 0, 255, "#0f00ff"},
 	}
-	if got := hex(16, 32, 48); got != "#102030" {
-		t.Errorf("hex(16,32,48) = %q, want #102030", got)
+	for _, tc := range cases {
+		if got := hex(tc.r, tc.g, tc.b); got != tc.want {
+			t.Errorf("hex(%d,%d,%d) = %q, want %q", tc.r, tc.g, tc.b, got, tc.want)
+		}
 	}
 }
 

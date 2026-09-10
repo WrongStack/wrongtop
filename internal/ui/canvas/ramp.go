@@ -1,6 +1,7 @@
 package canvas
 
 import (
+	"fmt"
 	"image/color"
 	"math"
 	"strconv"
@@ -115,7 +116,9 @@ func parseHex(s string) ([3]uint8, bool) {
 }
 
 func hex(r, g, b uint8) string {
-	return "#" + strconv.FormatUint(uint64(r)<<16|uint64(g)<<8|uint64(b), 16)
+	// zero-pad every channel: a red below 0x10 must not shrink the
+	// string to 5 hex digits (lipgloss rejects that as a color)
+	return fmt.Sprintf("#%02x%02x%02x", r, g, b)
 }
 
 // barSteps quantizes the fill fraction for the bar cache: 240 steps are

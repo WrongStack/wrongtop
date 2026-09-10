@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"testing"
 	"time"
 
@@ -230,6 +231,42 @@ func TestSoft(t *testing.T) {
 		th := New(c.p)
 		if got := th.Soft(c.hex); got != c.want {
 			t.Errorf("Soft(%q) on %s = %q, want %q", c.hex, c.p.Name, got, c.want)
+		}
+	}
+}
+
+// TestDerivedBlendHexValid pins the blends theme.New and Soft feed into
+// lipgloss.Color: with a plausible user theme whose background is black,
+// these blends once produced a red channel below 0x10, which truncated
+// the hex string to 5 digits and silently dropped the derived color.
+func TestDerivedBlendHexValid(t *testing.T) {
+	var hexShape = regexp.MustCompile(`^#[0-9a-f]{6}$`)
+	palettes := []Palette{{
+		Name: "black-bg", BG: "#000000", FG: "#e0e0e0",
+		Red: "#ff5555", Green: "#50fa7b", Yellow: "#f1fa8c",
+		Blue: "#6272a4", Purple: "#bd93f9", Cyan: "#8be9fd",
+		Orange: "#ffb86c", Gray: "#1e1e1e",
+	}}
+	for _, name := range PaletteNames() {
+		if p, ok := Resolve(name); ok {
+			palettes = append(palettes, p)
+		}
+	}
+	for _, p := range palettes {
+		// the exact expressions New builds for the derived backgrounds
+		blends := []struct {
+			what string
+			hex  string
+		}{
+			{"TabActive", canvas.Ramp{p.BG, p.Purple}.At(0.55)},
+			{"Track", canvas.Ramp{p.BG, p.Gray}.At(0.45)},
+			{"Selected", canvas.Ramp{p.BG, p.Purple}.At(0.30)},
+			{"Soft(FG)", New(p).Soft(p.FG)},
+		}
+		for _, b := range blends {
+			if !hexShape.MatchString(b.hex) {
+				t.Errorf("%s: %s blend = %q, want a #rrggbb hex color", p.Name, b.what, b.hex)
+			}
 		}
 	}
 }
