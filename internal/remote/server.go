@@ -158,7 +158,15 @@ func handleConn(conn net.Conn, hello Hello, token string,
 	}
 	defer unregister(ch)
 
+	// Each frame is written against a deadline: a client that stops
+	// reading (asleep laptop, wedged reader) fills the socket buffers
+	// and would otherwise park this goroutine in WriteFrame forever.
+	// The drop and shutdown paths close the channel underneath us, and
+	// only a failed write lets the range loop observe that and release
+	// the conn.
+	wd := max(5*time.Second, 2*time.Duration(hello.RefreshMS)*time.Millisecond)
 	for snap := range ch {
+		_ = conn.SetWriteDeadline(time.Now().Add(wd))
 		if err := WriteFrame(conn, snap); err != nil {
 			return
 		}

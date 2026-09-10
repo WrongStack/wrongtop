@@ -354,6 +354,49 @@ func TestHandleConnSnapshotWriteError(t *testing.T) {
 	}
 }
 
+// TestHandleConnStalledWriterReleasedByDeadline pins the stalled-writer
+// release: a client that stops reading parks handleConn inside
+// WriteFrame, and the drop and shutdown paths can only close the
+// channel under it — a parked conn.Write never observes that. The
+// per-frame write deadline must fail the stalled write so the loop
+// returns, unregisters and releases the goroutine and conn.
+func TestHandleConnStalledWriterReleasedByDeadline(t *testing.T) {
+	server, client := net.Pipe()
+	defer func() { _ = client.Close() }()
+	chans := make(chan chan collector.Snapshot, 1)
+	var unregistered bool
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		handleConn(server, Hello{Protocol: Protocol, RefreshMS: 250}, "secret",
+			func(ch chan collector.Snapshot) bool { chans <- ch; return true },
+			func(chan collector.Snapshot) { unregistered = true })
+	}()
+	if err := WriteFrame(client, Auth{Token: "secret"}); err != nil {
+		t.Fatal(err)
+	}
+	var hello Hello
+	if err := ReadFrame(client, 1<<10, &hello); err != nil {
+		t.Fatal(err)
+	}
+	ch := <-chans
+	// The client reads nothing from here: net.Pipe is unbuffered, so
+	// handleConn parks inside WriteFrame on this snapshot.
+	ch <- collector.Snapshot{Time: time.Unix(1000, 0).UTC()}
+	close(ch) // what the slow-client drop and the shutdown sweep both do
+
+	// The write deadline (5s floor) must break the stalled write and end
+	// the loop; 10s covers it with margin.
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("handleConn is still parked in WriteFrame after its channel was closed")
+	}
+	if !unregistered {
+		t.Error("unregister was not called after the stalled write failed")
+	}
+}
+
 func TestHandleConnStreamsSnapshots(t *testing.T) {
 	server, client := net.Pipe()
 	defer func() { _ = client.Close() }()
