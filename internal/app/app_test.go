@@ -3,6 +3,8 @@ package app
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -115,6 +117,42 @@ func TestRemoteLostBannerReplacesStatus(t *testing.T) {
 	local.width = 120
 	if out := ui.StripANSI(local.statusBarView()); strings.Contains(out, "REMOTE DISCONNECTED") {
 		t.Errorf("local status bar must not show the banner: %q", out)
+	}
+}
+
+// TestReloadConfigPreservesModuleSet pins the reload contract: reload
+// applies only what can change live (theme, refresh, thresholds, keys).
+// The module set is structural — tabs were built once at startup — and
+// has live readers (the docker polling gate, the help overlay), so a
+// rewritten config file must not swap it out from under them.
+func TestReloadConfigPreservesModuleSet(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	start := "theme: tokyo-night\n" // modules absent → config defaults, all on
+	if err := os.WriteFile(path, []byte(start), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Modules.Docker || !cfg.Modules.Processes {
+		t.Fatalf("precondition: default modules should be on, got %+v", cfg.Modules)
+	}
+	m := New(cfg, path, "test")
+
+	changed := "theme: nord\nmodules:\n  docker: false\n  processes: false\n"
+	if err := os.WriteFile(path, []byte(changed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m.reloadConfig()
+
+	if !m.cfg.Modules.Docker || !m.cfg.Modules.Processes {
+		t.Fatalf("reload mutated the module set: %+v", m.cfg.Modules)
+	}
+	if m.cfg.Theme != "nord" || m.theme.Palette.Name != "nord" {
+		t.Errorf("reload must still apply the theme, got cfg %q / palette %q",
+			m.cfg.Theme, m.theme.Palette.Name)
 	}
 }
 

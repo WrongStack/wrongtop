@@ -404,12 +404,16 @@ func (m *Model) applyTheme(name string) {
 
 // reloadConfig re-reads the YAML file and applies everything that can
 // change live: theme, refresh cadence, thresholds and key bindings.
+// The module set is structural — tabs were built once at startup — so
+// a reload must not swap it out from under the live readers (the
+// docker polling gate, the help overlay).
 func (m *Model) reloadConfig() {
 	reloaded, err := config.Load(m.cfgPath)
 	if err != nil {
 		m.setFlash("config error: " + err.Error())
 		return
 	}
+	reloaded.Modules = m.cfg.Modules
 	*m.cfg = *reloaded // tabs share the pointer; in-place swap updates all
 	th := theme.ByName(m.cfg.Theme)
 	m.theme = th
