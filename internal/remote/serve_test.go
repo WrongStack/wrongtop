@@ -191,11 +191,12 @@ func TestServeDropsSlowClient(t *testing.T) {
 
 	// Stop reading: the server's socket buffers back up, handleConn
 	// blocks writing, and the 4-slot client channel overflows. The
-	// wait must cover the whole drop chain — buffer fill (bounded by
-	// the server's 16KB send queue), the 5s write deadline and the
-	// broadcast ticks — before the drain starts, because an active
-	// drain reopens the TCP window and rescues a merely-blocked write.
-	time.Sleep(18 * time.Second)
+	// wait must cover the whole drop chain — buffer fill (floored at
+	// ~4.6KB server-side, so ≤ ~12s even for ~100B frames), the 5s
+	// write deadline and the broadcast ticks — before the drain
+	// starts, because an active drain reopens the TCP window and
+	// rescues a merely-blocked write.
+	time.Sleep(20 * time.Second)
 
 	// Drain: buffered frames end with EOF once the server dropped us.
 	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))

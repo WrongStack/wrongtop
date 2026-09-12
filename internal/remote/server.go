@@ -151,13 +151,16 @@ func handleConn(conn net.Conn, hello Hello, token string,
 		return
 	}
 	_ = conn.SetDeadline(time.Time{}) // stream mode
-	// Bound the per-client send queue: OS autotuning can balloon it to
-	// megabytes, which both parks memory per stalled reader and delays
-	// the write-deadline detection below by minutes of kernel
-	// buffering. 16KB is a few frames at any refresh cadence, so a
-	// stalled client blocks a write within seconds on every OS.
+	// Pin the per-client send queue to the kernel floor (~4.6KB on
+	// Linux): OS autotuning balloons it to megabytes, which parks
+	// memory per stalled reader and delays the write-deadline
+	// detection below by minutes of kernel buffering. On the floored
+	// queue even a ~100B snapshot frame blocks a write within seconds
+	// on every OS, so the deadline drop is prompt and deterministic.
+	// Trade-off: per-client throughput caps near sndbuf/RTT — ample
+	// for a monitoring stream that ships at most a few KB per tick.
 	if tc, ok := conn.(*net.TCPConn); ok {
-		_ = tc.SetWriteBuffer(16 << 10)
+		_ = tc.SetWriteBuffer(2 << 10)
 	}
 
 	ch := make(chan collector.Snapshot, 4)
