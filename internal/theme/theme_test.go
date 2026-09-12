@@ -152,12 +152,15 @@ func resetUserThemes(t *testing.T) {
 
 func TestThemesDir(t *testing.T) {
 	home := t.TempDir()
+	// os.UserHomeDir reads $HOME on Unix but $USERPROFILE on Windows.
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	want := filepath.Join(home, ".config", "wrongtop", "themes")
 	if got := ThemesDir(); got != want {
 		t.Errorf("ThemesDir() = %q, want %q", got, want)
 	}
 	t.Setenv("HOME", "")
+	t.Setenv("USERPROFILE", "")
 	if got := ThemesDir(); got != "" {
 		t.Errorf("ThemesDir() without home = %q, want empty", got)
 	}

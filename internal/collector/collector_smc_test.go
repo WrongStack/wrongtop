@@ -49,7 +49,10 @@ func fakeSMCData(key string) (string, []byte, error) {
 func fakeSMC(t *testing.T) {
 	t.Helper()
 	keys := []string{"TPD1", "Tp02", "Te03", "TC0D", "F0Ac", "ZZZZ"}
-	oCount, oAt, oRead := smcKeyCountFn, smcKeyAtFn, smcReadFn
+	oCount, oAt, oRead, oOpen := smcKeyCountFn, smcKeyAtFn, smcReadFn, smcOpenFn
+	// VM runners expose no AppleSMC device; stub the gate too or
+	// platformTemps returns before discovery ever sees the fakes.
+	smcOpenFn = func() bool { return true }
 	smcKeyCountFn = func() (int, error) { return len(keys), nil }
 	smcKeyAtFn = func(i int) (string, error) {
 		if i < 0 || i >= len(keys) {
@@ -58,10 +61,12 @@ func fakeSMC(t *testing.T) {
 		return keys[i], nil
 	}
 	smcReadFn = fakeSMCData
+	smcOnce, smcOpenOK = sync.Once{}, false
 	smcTempKeys, smcFanKeys, smcDiscoverOnce = nil, nil, sync.Once{}
 	t.Cleanup(func() {
-		smcKeyCountFn, smcKeyAtFn, smcReadFn = oCount, oAt, oRead
+		smcKeyCountFn, smcKeyAtFn, smcReadFn, smcOpenFn = oCount, oAt, oRead, oOpen
 		// force a fresh real discovery on the next platform use
+		smcOnce, smcOpenOK = sync.Once{}, false
 		smcTempKeys, smcFanKeys, smcDiscoverOnce = nil, nil, sync.Once{}
 	})
 }

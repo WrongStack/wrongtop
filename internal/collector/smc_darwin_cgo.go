@@ -187,7 +187,7 @@ var (
 // slow-metric mutex.
 func smcReady() bool {
 	smcOnce.Do(func() {
-		smcOpenOK = C.wt_smc_open() == 0
+		smcOpenOK = smcOpenFn()
 	})
 	return smcOpenOK
 }
@@ -249,11 +249,14 @@ func smcTempFamily(key string) bool {
 
 // The SMC readers are indirected so discovery and the derived views can
 // be exercised with synthetic keys — real hardware cannot be made to
-// fail on demand.
+// fail on demand. smcOpenFn joins them because VMs expose no AppleSMC
+// device (wt_smc_open reports 0x900): without stubbing it, the gate
+// closes before the fakes can act.
 var (
 	smcKeyCountFn = smcKeyCount
 	smcKeyAtFn    = smcKeyAt
 	smcReadFn     = smcRead
+	smcOpenFn     = func() bool { return C.wt_smc_open() == 0 }
 )
 
 // smcDiscover walks the whole SMC key table once and records the CPU

@@ -176,7 +176,10 @@ func TestPathResolution(t *testing.T) {
 	t.Run("home default", func(t *testing.T) {
 		home := t.TempDir()
 		t.Setenv("WRONGTOP_CONFIG", "")
+		// os.UserHomeDir reads $HOME on Unix but $USERPROFILE on
+		// Windows — set both so the resolution is hermetic everywhere.
 		t.Setenv("HOME", home)
+		t.Setenv("USERPROFILE", home)
 		want := filepath.Join(home, ".config", "wrongtop", "config.yaml")
 		if got := Path(); got != want {
 			t.Errorf("Path() = %q, want %q", got, want)
@@ -185,6 +188,7 @@ func TestPathResolution(t *testing.T) {
 	t.Run("no home yields empty", func(t *testing.T) {
 		t.Setenv("WRONGTOP_CONFIG", "")
 		t.Setenv("HOME", "")
+		t.Setenv("USERPROFILE", "")
 		if got := Path(); got != "" {
 			t.Errorf("Path() with no home = %q, want empty", got)
 		}
@@ -196,6 +200,7 @@ func TestPathResolution(t *testing.T) {
 func TestLoadNoLocation(t *testing.T) {
 	t.Setenv("WRONGTOP_CONFIG", "")
 	t.Setenv("HOME", "")
+	t.Setenv("USERPROFILE", "")
 	cfg, err := Load("")
 	if err != nil {
 		t.Fatal(err)

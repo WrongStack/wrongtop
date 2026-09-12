@@ -451,7 +451,11 @@ func (m *Model) diskView(innerW, maxRows int) []string {
 // mountLabel shortens a mountpoint to its label: the path basename,
 // which already covers macOS "/Volumes/..." volumes.
 func mountLabel(mountpoint string) string {
-	if base := filepath.Base(mountpoint); base != "" && base != "/" {
+	// Base("/") is "\" on Windows; the Separator check keeps the Unix
+	// root labeled "/" everywhere. Real Windows mounts ("C:\") still
+	// pass through unchanged — Base returns the volume root as-is.
+	if base := filepath.Base(mountpoint); base != "" && base != "/" &&
+		base != string(filepath.Separator) {
 		return base
 	}
 	return mountpoint

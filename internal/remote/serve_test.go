@@ -181,18 +181,73 @@ func TestServeDropsSlowClient(t *testing.T) {
 	conn := dialRetry(t, addr)
 	defer func() { _ = conn.Close() }()
 	authorize(t, conn, "secret")
+	// Shrink the client's receive window so the server's kernel send
+	// buffer fills within a few frames. Without this the drop time
+	// tracks OS-autotuned loopback buffer sizes — far past this test's
+	// window on Linux CI, comfortably inside it on macOS.
+	if tc, ok := conn.(*net.TCPConn); ok {
+		_ = tc.SetReadBuffer(512)
+	}
 
 	// Stop reading: the server's socket buffers back up, handleConn
 	// blocks writing, and the 4-slot client channel overflows.
 	time.Sleep(7 * time.Second)
 
 	// Drain: buffered frames end with EOF once the server dropped us.
-	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 	if _, err := io.Copy(io.Discard, conn); err != nil {
 		t.Fatalf("server never dropped the slow client: %v", err)
 	}
 	cancel()
 	awaitServeError(t, errCh)
+}
+
+// TestHandleConnWriteDeadlineDropsClient pins the per-frame write
+// deadline in handleConn on an unbuffered pipe: a client that stops
+// reading mid-stream is dropped once the deadline fires, no matter how
+// large the OS socket buffers are (the end-to-end TCP variant above
+// depends on kernel buffer limits and stays platform-sensitive).
+func TestHandleConnWriteDeadlineDropsClient(t *testing.T) {
+	server, client := net.Pipe()
+	defer func() { _ = client.Close() }()
+
+	registered := make(chan chan collector.Snapshot, 1)
+	unregistered := make(chan struct{}, 1)
+	register := func(c chan collector.Snapshot) bool { registered <- c; return true }
+	unregister := func(chan collector.Snapshot) { unregistered <- struct{}{} }
+	go handleConn(server, Hello{RefreshMS: 250}, "secret", register, unregister)
+
+	// Handshake on the pipe: the handler is already parked in ReadFrame,
+	// so the frame write/read pair up without deadlock.
+	authorize(t, client, "secret")
+
+	var feed chan collector.Snapshot
+	select {
+	case feed = <-registered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handleConn never registered")
+	}
+
+	// Queue frames; the handler stalls writing the first one.
+	for i := 0; i < 3; i++ {
+		feed <- collector.Snapshot{}
+	}
+
+	// Read exactly one frame, then stop: the next WriteFrame can only
+	// unblock via the write deadline.
+	_ = client.SetReadDeadline(time.Now().Add(2 * time.Second))
+	var snap collector.Snapshot
+	if err := ReadFrame(client, MaxFrame, &snap); err != nil {
+		t.Fatalf("first frame: %v", err)
+	}
+	_ = client.SetReadDeadline(time.Time{})
+
+	select {
+	case <-unregistered:
+		// dropped once the write deadline fired
+	case <-time.After(8 * time.Second):
+		t.Fatal("handleConn did not drop the stalled client")
+	}
 }
 
 // TestServeShutdownEndsClientStreams pins the shutdown sweep: after the
