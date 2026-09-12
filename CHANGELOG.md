@@ -4,7 +4,7 @@ All notable changes to WrongTop are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org).
 
-## [2.0.0] - 2026-09-06
+## [2.0.0] - 2026-09-12
 
 ### Added
 - **Connected-frame dashboard** (btop-style): shared dividers, resolved
@@ -28,6 +28,7 @@ All notable changes to WrongTop are documented here. The format follows
   box with full command line
 - Remote monitoring: `serve` / `connect` / `dump` over a token
   authenticated, read-only stream
+- Persistent connection-lost banner in remote mode
 - Themes: ten built-ins plus user theme files (`~/.config/wrongtop/themes`),
   live cycling with `T`; `border: rounded | square | thick | double`;
   `nerd_fonts` icon set
@@ -46,6 +47,19 @@ All notable changes to WrongTop are documented here. The format follows
   form)
 - Table crash on terminal resize when column counts changed
 - Disks I/O column truncation for `440.0 Kb/s`-width rates
+- Help/alerts overlays and the status flash overflowed wide terminals;
+  all are now truncated to terminal width
+- Config hot-reload dropped the module set and the remote read-only flag
+- Remote mode is now forced read-only, and remote stream writes are
+  bounded by a deadline so stalled clients release; `Dial` respects its
+  context deadline and `Serve` closes all client streams on shutdown
+- Sensor history maps grew without bound as labels churned
+- Hex channels were not zero-padded, corrupting dark gradient blends
+- Config loader rejected tree and app-layer keys in overrides
+- Docker panel kept stale container entries across updates
+- `dump` hung after the final requested snapshot
+- Percent alert thresholds were not normalized like temperature ones
+- Short rate chips padded the `/s` suffix instead of the rate digits
 
 ## [1.0.0] - 2026-09-03
 
