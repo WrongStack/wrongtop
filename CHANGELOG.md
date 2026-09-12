@@ -4,6 +4,13 @@ All notable changes to WrongTop are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org).
 
+## [2.0.2] - 2026-09-12
+
+### Added
+- Every release now publishes a Homebrew cask to
+  [wrongstack/homebrew-tap](https://github.com/WrongStack/homebrew-tap):
+  `brew install --cask wrongstack/tap/wrongtop`
+
 ## [2.0.1] - 2026-09-12
 
 ### Fixed

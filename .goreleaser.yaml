@@ -91,10 +91,10 @@ homebrew_casks:
       owner: wrongstack
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
-    # flip to false once github.com/wrongstack/homebrew-tap exists and
-    # the HOMEBREW_TAP_TOKEN secret (a PAT with repo scope on the tap)
-    # is set on this repository — until then releases must not fail on it
-    skip_upload: true
+    # pushes the regenerated cask to wrongstack/homebrew-tap via the
+    # HOMEBREW_TAP_TOKEN secret (fine-grained PAT: only the tap repo,
+    # Contents: Read and write). Setup + validation checklist lives in
+    # the tap's README: https://github.com/WrongStack/homebrew-tap
     homepage: "https://github.com/wrongstack/wrongtop"
     description: "Cross-platform terminal system monitor: CPU, memory, processes, disks, network, Docker, sensors and GPUs."
     license: MIT
