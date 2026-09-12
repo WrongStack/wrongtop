@@ -315,6 +315,29 @@ func TestDiskView(t *testing.T) {
 	}
 }
 
+// The DISKS panel's activity spark must follow the mount's device to its
+// IO history: IO counters are keyed by kernel device name ("disk3"),
+// mount devices carry partition/slice suffixes ("/dev/disk3s5"), and an
+// exact partition key (linux lists partitions in its IO table) still wins.
+func TestDiskViewSparklineMatchesIODevice(t *testing.T) {
+	m := panelModel(t)
+	m.snap.DiskIOs = []collector.DiskIO{{Name: "disk3", ReadBytes: 1000, BusyPercent: 5}}
+	m.snap.Disks = []collector.Disk{
+		{Device: "/dev/disk3s5", Mountpoint: "/", Percent: 90},      // darwin slice suffix
+		{Device: "/dev/sda1", Mountpoint: "/mnt/data", Percent: 50}, // exact partition key
+	}
+	m.ioHist["disk3"] = []float64{4000, 1000} // scaled: █ ▂
+	m.ioHist["sda1"] = []float64{1000, 2000}  // scaled: ▄ █
+
+	joined := strings.Join(m.diskView(80, 4), "\n")
+	if !strings.ContainsRune(joined, '▂') {
+		t.Errorf("slice-suffixed mount must find its history under the whole-disk IO name:\n%s", joined)
+	}
+	if !strings.ContainsRune(joined, '▄') {
+		t.Errorf("exact partition key must still match:\n%s", joined)
+	}
+}
+
 func TestDiskRightSumsIO(t *testing.T) {
 	m := panelModel(t)
 	right := m.diskRight()

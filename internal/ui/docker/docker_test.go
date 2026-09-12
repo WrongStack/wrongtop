@@ -880,3 +880,29 @@ func TestMouseListMode(t *testing.T) {
 		t.Fatalf("click without a daemon moved the cursor from %d to %d", before, got)
 	}
 }
+
+// Action results (actionDoneMsg) are the docker tab's only immediate
+// feedback for start/stop/restart: success and daemon errors must both
+// surface in the head line via m.status, and a later success must
+// replace an earlier failure.
+func TestActionDoneSetsStatus(t *testing.T) {
+	cfg := config.Default()
+	m := New(cfg, theme.ByName(cfg.Theme))
+	m.SetSize(120, 30)
+	m.Update(dockerclient.UpdateMsg{Client: &dockerclient.Client{}, Containers: []dockerclient.Container{{
+		ID: "abc123def456", Name: "web", State: "running",
+	}}})
+
+	m.Update(actionDoneMsg{label: "restart", err: errors.New("boom")})
+	if head := strings.SplitN(m.View(), "\n", 2)[0]; !strings.Contains(head, "restart: boom") {
+		t.Errorf("failed action feedback missing from the head: %q", head)
+	}
+
+	m.Update(actionDoneMsg{label: "restart"})
+	if head := strings.SplitN(m.View(), "\n", 2)[0]; !strings.Contains(head, "restart: done") {
+		t.Errorf("success feedback missing from the head: %q", head)
+	}
+	if head := strings.SplitN(m.View(), "\n", 2)[0]; strings.Contains(head, "boom") {
+		t.Errorf("stale failure feedback survived the success result: %q", head)
+	}
+}

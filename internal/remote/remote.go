@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/wrongstack/wrongtop/internal/collector"
@@ -128,7 +129,71 @@ func (c *Client) Next() (collector.Snapshot, error) {
 	if err := ReadFrame(c.conn, MaxFrame, &snap); err != nil {
 		return snap, err
 	}
+	sanitizeSnapshot(&snap)
 	return snap, nil
+}
+
+// sanitizeSnapshot strips terminal escape initiators from every string
+// the wire carries. Snapshot strings are rendered into styled output —
+// process names, hostnames, sensor labels, alert text — and a hostile
+// or compromised serve peer must not be able to smuggle terminal
+// commands (screen clears, title writes, altscreen switches) into the
+// client's terminal: the protocol "carries no commands by design", and
+// escape sequences are commands.
+func sanitizeSnapshot(s *collector.Snapshot) {
+	strip := func(sp *string) { *sp = sanitizeString(*sp) }
+	strip(&s.Host.Hostname)
+	strip(&s.Host.OS)
+	strip(&s.Host.Platform)
+	strip(&s.Host.Kernel)
+	strip(&s.Host.Arch)
+	for i := range s.Procs {
+		strip(&s.Procs[i].Name)
+		strip(&s.Procs[i].User)
+		strip(&s.Procs[i].State)
+	}
+	for i := range s.Sensors {
+		strip(&s.Sensors[i].Name)
+	}
+	for i := range s.Fans {
+		strip(&s.Fans[i].Name)
+	}
+	for i := range s.GPUs {
+		strip(&s.GPUs[i].Name)
+	}
+	for i := range s.Disks {
+		strip(&s.Disks[i].Device)
+		strip(&s.Disks[i].Mountpoint)
+		strip(&s.Disks[i].FSType)
+	}
+	for i := range s.DiskIOs {
+		strip(&s.DiskIOs[i].Name)
+	}
+	for i := range s.Nets {
+		strip(&s.Nets[i].Name)
+	}
+	for i := range s.Conns {
+		strip(&s.Conns[i].Local)
+		strip(&s.Conns[i].Remote)
+		strip(&s.Conns[i].State)
+	}
+}
+
+// sanitizeString removes the bytes that introduce terminal escape
+// sequences: ESC (0x1b) starts CSI/OSC/DCS, and the C1 CSI (U+009B)
+// does the same on terminals that accept 8-bit controls. The needle
+// must encode U+009B as valid UTF-8: a bare 0x9b byte is invalid UTF-8
+// and invisible to ContainsAny (staticcheck SA1011).
+func sanitizeString(s string) string {
+	if !strings.ContainsAny(s, "\x1b\u009b") {
+		return s
+	}
+	return strings.Map(func(r rune) rune {
+		if r == 0x1b || r == 0x9b {
+			return -1
+		}
+		return r
+	}, s)
 }
 
 // Close tears down the connection.

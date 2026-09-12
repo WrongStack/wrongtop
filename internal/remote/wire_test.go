@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/wrongstack/wrongtop/internal/collector"
 )
 
 // errWriter fails every write with the given error.
@@ -150,6 +153,74 @@ func TestNextAfterClose(t *testing.T) {
 	defer client.Close()
 	if _, err := client.Next(); err == nil {
 		t.Fatal("Next on a closed stream returned no error")
+	}
+}
+
+// TestNextSanitizesEscapeSequences pins the decode-boundary sanitization:
+// snapshot strings are rendered into styled terminal output, so a hostile
+// or compromised serve peer must not be able to smuggle terminal escape
+// sequences (screen clears, title writes, altscreen switches) into the
+// client — the protocol "carries no commands by design", and escape
+// sequences are commands. The data around stripped initiators and the
+// numeric fields must survive.
+func TestNextSanitizesEscapeSequences(t *testing.T) {
+	esc := collector.Snapshot{
+		Time: time.Now(),
+		Host: collector.Host{
+			Hostname: "\x1b]0;pwned\x07\x1b[?1049l",
+			OS:       "\u009b5n", // C1 CSI as valid UTF-8, the JSON-realistic form
+			Platform: "debian 12",
+		},
+		Procs: []collector.Proc{{
+			PID:   42,
+			PPID:  1,
+			Name:  "\x1b]0;pwned\x07\x1b[2Jevil-proc",
+			User:  "root",
+			State: "R",
+			CPU:   50,
+			Mem:   12.5,
+			RSS:   4096,
+		}},
+		Sensors: []collector.Sensor{{Name: "\x1b[?25lTC0D", TempC: 55}},
+		Conns:   []collector.Conn{{Local: "10.0.0.1:80", Remote: "[::]:*", State: "ESTABLISHED"}},
+	}
+
+	addr := startFakeServer(t, func(conn net.Conn) {
+		defer func() { _ = conn.Close() }()
+		var auth Auth
+		if err := ReadFrame(conn, 4<<10, &auth); err != nil || auth.Token != "secret" {
+			return
+		}
+		_ = WriteFrame(conn, Hello{Protocol: Protocol, RefreshMS: 250})
+		for {
+			if err := WriteFrame(conn, esc); err != nil {
+				return
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	})
+	client, err := Dial(context.Background(), addr, "secret", "test")
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer client.Close()
+
+	snap, err := client.Next()
+	if err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+
+	if rendered := fmt.Sprintf("%+v", snap); strings.ContainsAny(rendered, "\x1b\u009b") {
+		t.Fatalf("decoded snapshot carries escape initiators from the wire: %q", rendered)
+	}
+	if !strings.Contains(snap.Host.Hostname, "pwned") {
+		t.Errorf("hostname content lost in sanitization: %q", snap.Host.Hostname)
+	}
+	if len(snap.Procs) != 1 || snap.Procs[0].PID != 42 || snap.Procs[0].CPU != 50 || snap.Procs[0].RSS != 4096 {
+		t.Errorf("numeric proc data must be preserved: %+v", snap.Procs)
+	}
+	if !strings.Contains(snap.Procs[0].Name, "evil-proc") {
+		t.Errorf("proc name content lost in sanitization: %q", snap.Procs[0].Name)
 	}
 }
 

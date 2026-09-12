@@ -128,6 +128,16 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 		// channel, which would busy-loop
 		return nil
 
+	case actionDoneMsg:
+		// the only feedback an action gets until the next poll's state
+		// change: surface success and daemon errors in the head line
+		if msg.err != nil {
+			m.status = m.th.Styles.Crit.Render(fmt.Sprintf("%s: %v", msg.label, msg.err))
+		} else {
+			m.status = m.th.Styles.OK.Render(msg.label + ": done")
+		}
+		return nil
+
 	case tea.MouseWheelMsg:
 		mouse := msg.Mouse()
 		if m.logFor != "" { // scroll the log buffer

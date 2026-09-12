@@ -414,6 +414,13 @@ func (m *Model) reloadConfig() {
 		return
 	}
 	reloaded.Modules = m.cfg.Modules
+	if m.stream != nil {
+		// remote pids are not local pids: a file reload must never
+		// re-arm signaling against the local machine (NewRemote's
+		// invariant). In local mode the file's read_only value stays
+		// live-reloadable as before.
+		reloaded.ReadOnly = true
+	}
 	*m.cfg = *reloaded // tabs share the pointer; in-place swap updates all
 	th := theme.ByName(m.cfg.Theme)
 	m.theme = th
@@ -528,11 +535,24 @@ func stripANSI(s string) string {
 	return b.String()
 }
 
-// helpOverlay centers the help box over the tab content.
+// helpOverlay centers the help box over the tab content. The box is
+// content-sized and can outgrow the terminal, so every line is
+// truncated to the width — the same containment the alerts overlay and
+// the remote-lost banner apply.
 func (m *Model) helpOverlay(content string) string {
+	box := ui.Shadow(m.helpView(), m.theme.Styles.Muted)
+	if m.width > 0 {
+		lines := strings.Split(box, "\n")
+		for i, l := range lines {
+			if lipgloss.Width(l) > m.width {
+				lines[i] = ansi.Truncate(l, m.width, "")
+			}
+		}
+		box = strings.Join(lines, "\n")
+	}
 	return lipgloss.JoinVertical(lipgloss.Center,
 		lipgloss.Place(m.width, strings.Count(content, "\n")+1,
-			lipgloss.Center, lipgloss.Center, ui.Shadow(m.helpView(), m.theme.Styles.Muted)),
+			lipgloss.Center, lipgloss.Center, box),
 	)
 }
 
@@ -726,7 +746,14 @@ func (m *Model) statusBarView() string {
 
 	mid := ""
 	if time.Now().Before(m.flashUntil) && m.flash != "" {
-		mid = m.chip(pal.Yellow, m.flash)
+		// transient feedback must respect the bar's budget: config
+		// errors carry file paths and yaml newlines, which overflowed
+		// the width and split the one-line status bar. No room means no
+		// flash — the hints win.
+		text := strings.ReplaceAll(m.flash, "\n", " ")
+		if budget := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 2; budget > 10 {
+			mid = m.chip(pal.Yellow, ansi.Truncate(text, budget, ""))
+		}
 	} else if !m.latest.Time.IsZero() {
 		chips := m.liveChips()
 		sep := m.chipSep()
@@ -738,8 +765,8 @@ func (m *Model) statusBarView() string {
 	}
 
 	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - lipgloss.Width(mid)
-	if gap < 1 {
-		gap = 1
+	if gap < 1 { // budget spent: a filler cell overflowed exact-fit widths
+		gap = 0
 	}
 	half := gap / 2
 	return m.theme.Styles.Status.Render(left +

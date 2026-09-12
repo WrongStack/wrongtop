@@ -15,6 +15,7 @@ import (
 	"github.com/wrongstack/wrongtop/internal/collector"
 	"github.com/wrongstack/wrongtop/internal/config"
 	"github.com/wrongstack/wrongtop/internal/dockerclient"
+	"github.com/wrongstack/wrongtop/internal/remote"
 	"github.com/wrongstack/wrongtop/internal/ui"
 )
 
@@ -153,6 +154,152 @@ func TestReloadConfigPreservesModuleSet(t *testing.T) {
 	if m.cfg.Theme != "nord" || m.theme.Palette.Name != "nord" {
 		t.Errorf("reload must still apply the theme, got cfg %q / palette %q",
 			m.cfg.Theme, m.theme.Palette.Name)
+	}
+}
+
+// The remote view must stay read-only across a live config reload:
+// remote snapshot pids are not local pids, so a rewritten file without
+// read_only must not re-arm signaling against the local machine
+// (NewRemote forces the flag at construction). Local mode keeps the
+// file's read_only value live-reloadable, both ways.
+func TestReloadConfigKeepsRemoteReadOnly(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	start := "theme: tokyo-night\n" // read_only absent → file value false
+	if err := os.WriteFile(path, []byte(start), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := NewRemote(cfg, path, "test", &remote.Client{}, "host:1")
+	if !cfg.ReadOnly {
+		t.Fatal("precondition: NewRemote must force ReadOnly")
+	}
+
+	if err := os.WriteFile(path, []byte("theme: nord\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m.reloadConfig()
+
+	if !cfg.ReadOnly {
+		t.Fatal("remote reload reset ReadOnly: signaling re-armed on remote pids")
+	}
+	if m.cfg.Theme != "nord" || m.theme.Palette.Name != "nord" {
+		t.Errorf("remote reload must still apply the file, got cfg %q / palette %q",
+			m.cfg.Theme, m.theme.Palette.Name)
+	}
+	if m.cfg.Modules.Docker {
+		t.Error("remote reload must keep docker disabled")
+	}
+
+	// contrast: local mode keeps the documented live-reload semantics
+	localPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(localPath, []byte("read_only: true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	localCfg, err := config.Load(localPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	local := New(localCfg, localPath, "test")
+	if !localCfg.ReadOnly {
+		t.Fatal("precondition: local read_only: true must load")
+	}
+	if err := os.WriteFile(localPath, []byte("read_only: false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	local.reloadConfig()
+	if localCfg.ReadOnly {
+		t.Error("local reload must still apply the file's read_only value")
+	}
+}
+
+// Every help row is parsed by helpView with strings.Cut(l, "  "): the
+// first double space separates key from description, and a row without
+// one renders as a fused key blob — no description column, misaligned
+// with the rest of its section.
+func TestHelpRowsUseKeyDescColumns(t *testing.T) {
+	m := New(config.Default(), "", "test")
+	for _, sec := range m.helpSections() {
+		for _, l := range sec.lines {
+			if _, _, found := strings.Cut(l, "  "); !found {
+				t.Errorf("help row %q in section %s has no key/desc separator", l, sec.title)
+			}
+		}
+	}
+	view := stripANSITest(m.helpView())
+	for _, want := range []string{
+		"q         quit (or ctrl+c)",
+		"←→        switch usage / I/O table",
+		"←→        collapse / expand tree",
+	} {
+		if !strings.Contains(view, want) {
+			t.Errorf("help view missing aligned row %q", want)
+		}
+	}
+}
+
+// The status bar must stay inside the terminal: the chip-drop loop
+// spends the width budget lowest-priority-first, and the centering gap
+// must absorb whatever is left — a forced filler cell made the bar
+// render width+1 columns at every exact-fit width.
+func TestStatusBarRespectsTerminalWidth(t *testing.T) {
+	cfg := config.Default()
+	m := New(cfg, "", "test")
+	m.Update(collector.SnapshotMsg{Snap: collector.Snapshot{
+		Time: time.Now(),
+		CPU:  collector.CPU{Percent: 42},
+		Mem:  collector.Mem{Percent: 61},
+		Nets: []collector.NetIface{{Name: "en0", RxRate: 1e6, TxRate: 2e5, RxTotal: 1, TxTotal: 1}},
+	}})
+	for w := 30; w <= 160; w++ {
+		m.width = w
+		if n := lipgloss.Width(m.statusBarView()); n > w {
+			t.Errorf("width %d: status bar renders %d columns", w, n)
+		}
+	}
+}
+
+// The flash is transient feedback rendered into the one-line status
+// bar: config errors carry file paths and yaml newlines, so it must be
+// flattened and truncated to the bar's remaining budget — and dropped
+// entirely when no room is left.
+func TestStatusBarFlashStaysInBudget(t *testing.T) {
+	m := New(config.Default(), "", "test")
+	m.flash = "config error: wrongtop: parsing /var/folders/xx/T/config.yaml: yaml: unmarshal errors:\n  line 1: cannot unmarshal !!str `not-a-map` into config.Modules"
+	m.flashUntil = time.Now().Add(time.Minute)
+	for w := 40; w <= 120; w += 10 {
+		m.width = w
+		bar := m.statusBarView()
+		if strings.Contains(bar, "\n") {
+			t.Fatalf("width %d: flash newline split the status bar: %q", w, bar)
+		}
+		if n := lipgloss.Width(bar); n > w {
+			t.Errorf("width %d: status bar renders %d columns", w, n)
+		}
+	}
+	m.width = 120
+	if !strings.Contains(stripANSITest(m.statusBarView()), "config error") {
+		t.Errorf("flash should stay visible (truncated), got %q", stripANSITest(m.statusBarView()))
+	}
+}
+
+// The help box is content-sized and can outgrow the terminal; every
+// overlay line must be truncated to the width so the frame never
+// renders wider than the terminal.
+func TestHelpOverlayFitsTerminalWidth(t *testing.T) {
+	m := New(config.Default(), "", "test")
+	m.helpMode = true
+	for w := 40; w <= 120; w += 10 {
+		m.Update(tea.WindowSizeMsg{Width: w, Height: 30})
+		for _, l := range strings.Split(m.View().Content, "\n") {
+			if n := lipgloss.Width(l); n > w {
+				t.Errorf("width %d: help frame line renders %d columns: %q", w, n, stripANSITest(l))
+				break
+			}
+		}
 	}
 }
 

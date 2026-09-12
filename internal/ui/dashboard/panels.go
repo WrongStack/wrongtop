@@ -438,7 +438,7 @@ func (m *Model) diskView(innerW, maxRows int) []string {
 		mount := mountLabel(d.Mountpoint)
 		name := m.th.Styles.Muted.Render(fmt.Sprintf("%-10s", ui.Trunc(mount, 10)))
 		bar := canvas.GradientBar(barW, d.Percent/100, m.th.Ramps.Mem, m.th.Styles.Track)
-		spark := canvas.SparklineScaled(m.ioHist[filepath.Base(d.Device)], m.th.Ramps.IO)
+		spark := canvas.SparklineScaled(m.sparkFor(d.Device), m.th.Ramps.IO)
 		pct := m.valuePct(d.Percent, m.cfg.Thresholds.MemWarn, m.cfg.Thresholds.MemCrit)
 		lines = append(lines, name+bar+pct+spark)
 	}
@@ -455,6 +455,24 @@ func mountLabel(mountpoint string) string {
 		return base
 	}
 	return mountpoint
+}
+
+// sparkFor returns the I/O history of a mount's device. IO counters are
+// keyed by the kernel device name ("disk3", "sda") while mount devices
+// carry partition/slice suffixes ("/dev/disk3s5", "/dev/sda1"), so the
+// longest IO name that prefixes the device base wins — an exact match on
+// platforms whose IO table lists partitions (linux), the whole disk on
+// darwin.
+func (m *Model) sparkFor(device string) []float64 {
+	base := filepath.Base(device)
+	best := ""
+	var hist []float64
+	for name, h := range m.ioHist {
+		if len(name) > len(best) && strings.HasPrefix(base, name) {
+			best, hist = name, h
+		}
+	}
+	return hist
 }
 
 // procView renders the busiest processes, CPU first, under a column
