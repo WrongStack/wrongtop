@@ -24,6 +24,24 @@ func countOpenFDs(t *testing.T) int {
 	return 0
 }
 
+// awaitServeAttemptEnd waits for Serve to return at the end of a
+// rejected attempt. With the descriptor table deliberately full, a
+// cancelled Serve may surface the in-flight accept's EMFILE ("accept:
+// too many open files") instead of the clean listener close — both
+// outcomes end the attempt, so only a non-accept failure is fatal
+// here.
+func awaitServeAttemptEnd(t *testing.T, errCh chan error) {
+	t.Helper()
+	select {
+	case err := <-errCh:
+		if err != nil && !strings.Contains(err.Error(), "accept:") {
+			t.Fatalf("Serve: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Serve did not shut down")
+	}
+}
+
 // TestServeAcceptError covers the accept-failure branch: the soft file
 // descriptor limit is lowered to the current usage plus a little, the
 // table is filled back up, and one slot is freed for a client dial so
@@ -85,7 +103,7 @@ func TestServeAcceptError(t *testing.T) {
 			// No free slot could be claimed; tear down and retry.
 			_ = probe.Close()
 			cancel()
-			awaitServeError(t, errCh)
+			awaitServeAttemptEnd(t, errCh)
 			continue
 		}
 		_ = held[0].Close() // free exactly one slot
@@ -95,7 +113,7 @@ func TestServeAcceptError(t *testing.T) {
 			// The slot was taken by something transient; retry.
 			_ = probe.Close()
 			cancel()
-			awaitServeError(t, errCh)
+			awaitServeAttemptEnd(t, errCh)
 			continue
 		}
 		select {
@@ -112,7 +130,7 @@ func TestServeAcceptError(t *testing.T) {
 			_ = conn.Close()
 			_ = probe.Close()
 			cancel()
-			awaitServeError(t, errCh)
+			awaitServeAttemptEnd(t, errCh)
 		}
 	}
 	t.Fatal("could not trigger an accept failure after 5 attempts")
