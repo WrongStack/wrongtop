@@ -4,6 +4,16 @@ All notable changes to WrongTop are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org).
 
+## [2.0.1] - 2026-09-12
+
+### Fixed
+- Remote serve detects stalled clients within seconds on every OS: the
+  per-client send queue is pinned to the kernel floor instead of letting
+  OS autotuning buffer minutes of frames, and per-client kernel memory
+  is now bounded
+- Disk labels keep `/` for the Unix root on Windows, so alert chips and
+  disk panels no longer render `DISK \ 96%`
+
 ## [2.0.0] - 2026-09-12
 
 ### Added
