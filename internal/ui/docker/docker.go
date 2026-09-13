@@ -116,7 +116,13 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 		return nil
 
 	case logLineMsg:
-		m.logs = append(m.logs, string(msg))
+		if m.logFor == "" || msg.stream != m.logStream {
+			// the line's stream is gone (pane closed) or was replaced
+			// (close + reopen on another container): appending would
+			// write another container's text under this pane
+			return nil
+		}
+		m.logs = append(m.logs, msg.text)
 		if len(m.logs) > dockerLogLines {
 			m.logs = m.logs[len(m.logs)-dockerLogLines:]
 		}
@@ -180,7 +186,14 @@ func (m *Model) scrollbackMax() int {
 	return max(0, len(m.logs)-(m.height-3))
 }
 
-type logLineMsg string
+// logLineMsg carries the stream it came from alongside the text: the
+// wait chain can outlive its stream (pane closed, or closed and
+// reopened on another container), and Update must be able to tell a
+// replaced stream's line from the active one's.
+type logLineMsg struct {
+	stream <-chan string
+	text   string
+}
 
 // logDoneMsg signals that the log stream channel was closed by the
 // reader goroutine — the terminal event of waitForLog.
@@ -298,7 +311,7 @@ func (m *Model) waitForLog() tea.Cmd {
 		if !ok {
 			return logDoneMsg{}
 		}
-		return logLineMsg(s)
+		return logLineMsg{stream: lines, text: s}
 	}
 }
 

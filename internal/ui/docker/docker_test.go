@@ -103,7 +103,7 @@ func pumpLogs(t *testing.T, m *Model, cmd tea.Cmd) []string {
 		if !ok {
 			t.Fatalf("unexpected log message %T", msg)
 		}
-		got = append(got, string(line))
+		got = append(got, line.text)
 		cmd = m.Update(msg)
 	}
 	t.Fatal("log stream did not end within 100 messages")
@@ -167,8 +167,8 @@ func TestLogStreamLinesFlowThenEnd(t *testing.T) {
 		if !ok {
 			t.Fatalf("expected logLineMsg %q, got %T", want, msg)
 		}
-		if string(line) != want {
-			t.Fatalf("got line %q, want %q", line, want)
+		if line.text != want {
+			t.Fatalf("got line %q, want %q", line.text, want)
 		}
 		if cmd = m.Update(msg); cmd == nil {
 			t.Fatalf("Update stopped re-arming while lines remain (waiting for %q)", want)
@@ -202,6 +202,43 @@ func TestCloseLogsStopsWaiting(t *testing.T) {
 	}
 	if len(m.logs) != 0 {
 		t.Fatalf("closeLogs left %d entries in the log buffer", len(m.logs))
+	}
+}
+
+// TestLateLineAfterCloseDoesNotRearm pins the close race: a log line
+// consumed by the pump just before esc is processed (closeLogs nils the
+// stream) must be dropped — re-arming waitForLog on the nil stream
+// parks a goroutine forever, and appending would pollute the cleared
+// buffer. Same invariant as TestCloseLogsStopsWaiting, for the late-
+// line path its logDoneMsg case does not cover.
+func TestLateLineAfterCloseDoesNotRearm(t *testing.T) {
+	m := newTestModel()
+	m.logFor = "web"
+	m.cancelLog = func() {}
+	stream := make(chan string, 1)
+	m.logStream = stream
+
+	stream <- "late line"
+	pump := m.waitForLog()
+	done := make(chan tea.Msg, 1)
+	go func() { done <- pump() }()
+	var line tea.Msg
+	select {
+	case line = <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("pump never consumed the buffered line")
+	}
+	if _, ok := line.(logLineMsg); !ok {
+		t.Fatalf("expected logLineMsg, got %T", line)
+	}
+
+	m.closeLogs() // esc wins the queue race
+
+	if cmd := m.Update(line); cmd != nil {
+		t.Fatal("late logLineMsg re-armed a wait on the closed stream")
+	}
+	if len(m.logs) != 0 {
+		t.Fatalf("late line polluted the closed log buffer: %v", m.logs)
 	}
 }
 
