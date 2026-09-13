@@ -486,10 +486,11 @@ func (m *Model) windowTitle() string {
 }
 
 // frame composes the full screen: tab bar, content area, status bar.
-// The content area is padded (or its trailing blanks trimmed) so it is
-// exactly height-2 rows — a short tab (empty docker, sparse sensors,
-// waiting for the first snapshot) can never pull the status bar off the
-// bottom row. It is docked, always.
+// The content area is clipped or padded so it is exactly height-2 rows
+// — a tab can outgrow its budget (tiny panes, extreme snapshots), and
+// the overflow must never push the status bar off the bottom row — and
+// no composed line is wider than the terminal, where it would soft-wrap
+// and push everything below it off-screen. Docked, always.
 func (m *Model) frame() string {
 	content := m.tabs[m.active].View()
 	if m.helpMode {
@@ -503,15 +504,44 @@ func (m *Model) frame() string {
 	for len(lines) > 0 && strings.TrimSpace(stripANSI(lines[len(lines)-1])) == "" {
 		lines = lines[:len(lines)-1] // trailing blanks carry no information
 	}
+	if m.height > 0 {
+		// A tab can outgrow its budget: a tiny terminal pane or a
+		// snapshot with extreme wire-delivered values renders more rows
+		// than the content area owns. Docking stays honest by clipping
+		// the overflow (the overlays apply the same containment to
+		// their boxes); before the first WindowSizeMsg the frame is
+		// transient, so nothing is clipped.
+		if budget := max(0, m.height-2); len(lines) > budget {
+			lines = lines[:budget]
+		}
+	}
 	for len(lines) < m.height-2 {
 		lines = append(lines, "")
 	}
 
-	return strings.Join([]string{
-		m.tabBarView(),
-		strings.Join(lines, "\n"),
-		m.statusBarView(),
-	}, "\n")
+	parts := []string{m.tabBarView()}
+	if len(lines) > 0 {
+		// at height ≤ 2 the content budget is zero; joining an empty
+		// middle section would emit a blank line and push the status
+		// bar off a 2-row terminal
+		parts = append(parts, strings.Join(lines, "\n"))
+	}
+	parts = append(parts, m.statusBarView())
+	out := strings.Join(parts, "\n")
+	if m.width > 0 {
+		// No row may exceed the terminal: an over-wide line soft-wraps
+		// and pushes everything below it off-screen, so every line —
+		// chrome included — is clipped to the width, the same
+		// containment helpOverlay applies to its box.
+		rows := strings.Split(out, "\n")
+		for i, l := range rows {
+			if lipgloss.Width(l) > m.width {
+				rows[i] = ansi.Truncate(l, m.width, "")
+			}
+		}
+		out = strings.Join(rows, "\n")
+	}
+	return out
 }
 
 // stripANSI removes SGR (and other escape) sequences, leaving printable
