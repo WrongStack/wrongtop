@@ -168,7 +168,12 @@ func (c *Collector) collectHost(ctx context.Context) Host {
 	if avg, err := load.AvgWithContext(ctx); err == nil {
 		h.Load = [3]float64{avg.Load1, avg.Load5, avg.Load15}
 	}
+	// cachedUsers is written by collectSlow under slowMu; the TUI's
+	// wall-clock tick can overlap two Collect calls, so read it under
+	// the same lock instead of racing the refresh branch.
+	c.slowMu.Lock()
 	h.Users = c.cachedUsers // utmpx parse rides the slow cadence
+	c.slowMu.Unlock()
 	return h
 }
 
