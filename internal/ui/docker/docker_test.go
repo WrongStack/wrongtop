@@ -461,11 +461,10 @@ func TestLifecycleActions(t *testing.T) {
 	m.client = &dockerclient.Client{}
 	m.Update(dockerclient.UpdateMsg{Client: m.client, Containers: testCons()})
 
-	// a fresh rebuild leaves the cursor at the bubbles out-of-range marker
-	// until the user navigates; move onto the first row first
-	m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	// a fresh rebuild must leave the cursor on the first row: the keys
+	// below act on the selection without any navigation
 	if got := m.table.Cursor(); got != 0 {
-		t.Fatalf("down arrow put the cursor at %d, want 0", got)
+		t.Fatalf("fresh rebuild put the cursor at %d, want 0", got)
 	}
 
 	for _, key := range []string{"s", "t", "r"} {
@@ -839,8 +838,8 @@ func TestMouseListMode(t *testing.T) {
 	m.Update(dockerclient.UpdateMsg{Client: m.client, Containers: testCons()})
 
 	m.Update(tea.MouseWheelMsg{Y: 1, Button: tea.MouseWheelDown})
-	if got := m.table.Cursor(); got != 2 {
-		t.Fatalf("wheel down moved the cursor to %d, want 2 (from the -1 out-of-range marker)", got)
+	if got := m.table.Cursor(); got != 3 {
+		t.Fatalf("wheel down moved the cursor to %d, want 3 (from the first row)", got)
 	}
 	m.Update(tea.MouseWheelMsg{Y: 1, Button: tea.MouseWheelUp})
 	if got := m.table.Cursor(); got != 0 {

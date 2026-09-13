@@ -190,6 +190,7 @@ func (m *Model) rebuild() {
 		rows[i] = row
 	}
 	m.table.SetRows(rows)
+	ui.EnsureCursor(&m.table)
 }
 
 // stateStyle colors the TCP state: live traffic green, listeners cyan,

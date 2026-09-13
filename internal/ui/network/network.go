@@ -186,6 +186,7 @@ func (m *Model) rebuild() {
 		rows[i] = row
 	}
 	m.table.SetRows(rows)
+	ui.EnsureCursor(&m.table)
 }
 
 // View implements ui.Tab.

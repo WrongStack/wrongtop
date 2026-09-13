@@ -218,6 +218,7 @@ func (m *Model) rebuild() {
 		rows[i] = row
 	}
 	m.table.SetRows(rows)
+	ui.EnsureCursor(&m.table)
 
 	rows = make([]table.Row, len(m.diskIOs))
 	iops := m.width >= 76
@@ -243,6 +244,7 @@ func (m *Model) rebuild() {
 		rows[i] = row
 	}
 	m.io.SetRows(rows)
+	ui.EnsureCursor(&m.io)
 }
 
 // View implements ui.Tab.

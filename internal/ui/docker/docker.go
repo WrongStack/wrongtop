@@ -384,6 +384,7 @@ func (m *Model) rebuild() {
 		rows[i] = row
 	}
 	m.table.SetRows(rows)
+	ui.EnsureCursor(&m.table)
 }
 
 // statusCell colors the docker status string by its health verdict
