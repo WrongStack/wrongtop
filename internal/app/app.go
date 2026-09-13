@@ -330,9 +330,27 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil // overlays swallow other keys
 		}
 		return m, m.tabs[m.active].Update(msg)
+
+	case tea.MouseWheelMsg:
+		// wheel is direct input: only the focused tab scrolls
+		return m, m.tabs[m.active].Update(msg)
 	}
 
-	return m, m.tabs[m.active].Update(msg)
+	// Everything past the input cases is a completion message from a
+	// command some tab spawned — a docker log line, a lifecycle action
+	// report, a background cmdline fetch. The tab that armed the wait
+	// may not be the active one (tab switching never cancels a running
+	// stream), and dropping the message on the active tab broke the
+	// owner's wait chain: waitForLog never re-armed and the log pane
+	// froze with its pump parked. Route completions to every tab; tabs
+	// ignore the types they don't own.
+	var cmds []tea.Cmd
+	for _, t := range m.tabs {
+		if cmd := t.Update(msg); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	return m, tea.Batch(cmds...)
 }
 
 // globalKey handles keys that work on every tab. It reports whether the
