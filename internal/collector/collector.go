@@ -32,8 +32,9 @@ type hostIdentity struct {
 // Collector polls system metrics on demand. It is safe for concurrent use.
 // The zero value is usable; use New to size the slow-metric cadence.
 type Collector struct {
-	once sync.Once
+	idMu sync.Mutex
 	id   hostIdentity
+	idOK bool // identity fetched successfully at least once
 
 	// slowInterval throttles metrics that are expensive or slow-changing
 	// (temperatures, frequency, battery) to one sample per interval.
@@ -139,28 +140,34 @@ func (c *Collector) collectSlow(ctx context.Context, now time.Time) (float64, []
 }
 
 func (c *Collector) collectHost(ctx context.Context) Host {
-	c.once.Do(func() {
-		info, err := host.InfoWithContext(ctx)
-		if err != nil {
-			return
+	// identity fetch under idMu: a failed fetch is retried on the next
+	// Collect. The first Collect's 2s budget can expire mid-snapshot —
+	// collectHost runs late — and sync.Once would consume that failed
+	// attempt, zeroing the identity for the whole session.
+	c.idMu.Lock()
+	if !c.idOK {
+		if info, err := host.InfoWithContext(ctx); err == nil {
+			c.id = hostIdentity{
+				Hostname: info.Hostname,
+				OS:       info.OS,
+				Platform: strings.TrimSpace(info.Platform + " " + info.PlatformVersion),
+				Kernel:   info.KernelVersion,
+				Arch:     info.KernelArch,
+				Procs:    int(info.Procs),
+			}
+			c.idOK = true
 		}
-		c.id = hostIdentity{
-			Hostname: info.Hostname,
-			OS:       info.OS,
-			Platform: strings.TrimSpace(info.Platform + " " + info.PlatformVersion),
-			Kernel:   info.KernelVersion,
-			Arch:     info.KernelArch,
-			Procs:    int(info.Procs),
-		}
-	})
+	}
+	id := c.id
+	c.idMu.Unlock()
 
 	h := Host{
-		Hostname: c.id.Hostname,
-		OS:       c.id.OS,
-		Platform: c.id.Platform,
-		Kernel:   c.id.Kernel,
-		Arch:     c.id.Arch,
-		Procs:    c.id.Procs,
+		Hostname: id.Hostname,
+		OS:       id.OS,
+		Platform: id.Platform,
+		Kernel:   id.Kernel,
+		Arch:     id.Arch,
+		Procs:    id.Procs,
 	}
 	if uptime, err := host.UptimeWithContext(ctx); err == nil {
 		h.Uptime = time.Duration(uptime) * time.Second
