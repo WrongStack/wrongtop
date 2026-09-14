@@ -9,11 +9,15 @@ import (
 	"strings"
 )
 
+// zramRoot is where the kernel exposes block devices; a package var so
+// tests can point the reader at a synthetic sysfs tree.
+var zramRoot = "/sys/block"
+
 // zramStats reports the total capacity and the stored (uncompressed) size
 // of every zram device from sysfs. Unconfigured devices (disksize 0) are
 // skipped; on systems without zram both values are 0.
 func zramStats() (total, used uint64) {
-	devices, _ := filepath.Glob("/sys/block/zram*/disksize")
+	devices, _ := filepath.Glob(filepath.Join(zramRoot, "zram*", "disksize"))
 	for _, d := range devices {
 		raw, err := os.ReadFile(d)
 		if err != nil {
