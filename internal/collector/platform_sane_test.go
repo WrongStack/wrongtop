@@ -12,8 +12,8 @@ import (
 // values, so a unit-conversion regression (kelvin/celsius, tenths, NaN
 // from a zero denominator) in temps_windows.go, battery_windows.go,
 // fans_linux.go or users_linux.go would stay green. Bounds mirror the
-// implementations' own plausibility filters (windows caps temps at
-// 120°C, darwin at 110°C), so only a real defect can trip them; empty
+// implementations' own plausibility filters (windows and linux cap
+// temps at 120°C, darwin at 110°C), so only a real defect can trip them; empty
 // results are valid — most CI runners report no sensors at all.
 func TestPlatformCollectorsSane(t *testing.T) {
 	ctx := context.Background()

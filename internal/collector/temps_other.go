@@ -1,9 +1,10 @@
-//go:build !darwin && !windows
+//go:build !darwin && !windows && !linux
 
 package collector
 
 import "context"
 
-// platformTemps has no extra source on this platform: gopsutil covers
-// hwmon readings on linux, other kernels expose nothing reliable.
+// platformTemps has no source on this platform: other kernels expose
+// no temperature readings wrongtop can rely on. Linux reads hwmon
+// (temps_linux.go).
 func platformTemps(context.Context) []Sensor { return nil }
