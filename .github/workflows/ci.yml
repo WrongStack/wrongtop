@@ -28,6 +28,14 @@ jobs:
       - name: Test
         run: go test -race ./...
 
+      # Non-verbose `go test` hides skips, so the windows lane re-runs the
+      # kill-path test verbosely: its --- PASS line proves from the log that
+      # it ran rather than silently skipped (windows has no `sleep`; the
+      # test uses `ping -n` there).
+      - name: Windows kill-path test (verbose)
+        if: matrix.os == 'windows-latest'
+        run: go test -race -run TestConfirmSendsRealSignal -v ./internal/ui/processes
+
       - name: Build
         run: go build ./...
 
