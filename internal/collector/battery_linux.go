@@ -10,10 +10,14 @@ import (
 	"strings"
 )
 
+// powerSupplyRoot is the sysfs power_supply class; a package var so
+// tests can point the reader at a synthetic tree.
+var powerSupplyRoot = "/sys/class/power_supply"
+
 // readBattery reads the first battery from sysfs. A nil result without
 // error means no battery is present.
 func readBattery(ctx context.Context) *Battery {
-	entries, err := os.ReadDir("/sys/class/power_supply")
+	entries, err := os.ReadDir(powerSupplyRoot)
 	if err != nil {
 		return nil
 	}
@@ -21,7 +25,7 @@ func readBattery(ctx context.Context) *Battery {
 		if !strings.HasPrefix(strings.ToUpper(e.Name()), "BAT") {
 			continue
 		}
-		dir := filepath.Join("/sys/class/power_supply", e.Name())
+		dir := filepath.Join(powerSupplyRoot, e.Name())
 		cap, err := os.ReadFile(filepath.Join(dir, "capacity"))
 		if err != nil {
 			continue

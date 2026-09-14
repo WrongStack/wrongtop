@@ -18,10 +18,14 @@ const (
 	utmpUserProcess = 7
 )
 
+// utmpPath is the live utmp database; a package var so tests can point
+// the counter at a synthetic file.
+var utmpPath = "/var/run/utmp"
+
 // countUsers returns the number of distinct logged-in users from the
 // utmp database.
 func countUsers() int {
-	raw, err := os.ReadFile("/var/run/utmp")
+	raw, err := os.ReadFile(utmpPath)
 	if err != nil {
 		return 0
 	}

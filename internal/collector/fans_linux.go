@@ -13,7 +13,7 @@ import (
 // readFans reports cooling fan speeds from hwmon (the standard place
 // kernel drivers expose fanN_input RPM counters).
 func readFans() []Fan {
-	matches, _ := filepath.Glob("/sys/class/hwmon/hwmon*/fan*_input")
+	matches, _ := filepath.Glob(filepath.Join(hwmonRoot, "hwmon*", "fan*_input"))
 	var fans []Fan
 	for _, m := range matches {
 		raw, err := os.ReadFile(m)
