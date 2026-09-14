@@ -19,7 +19,9 @@ var hwmonRoot = "/sys/class/hwmon"
 // (the standard place kernel drivers expose tempN_input millidegree
 // readings: coretemp on Intel, k10temp on AMD, acpitz ACPI zones).
 // Chips without readable inputs contribute nothing; a machine with no
-// hwmon temperature support yields nil.
+// hwmon temperature support yields nil. Only CPU-relevant sensors are
+// returned — the arm contract TestCollectSensorsFiltersCPURelevant
+// enforces (drive sensors like an NVMe "Composite" are excluded).
 func platformTemps(_ context.Context) []Sensor {
 	matches, _ := filepath.Glob(filepath.Join(hwmonRoot, "hwmon*", "temp*_input"))
 	var out []Sensor
@@ -36,7 +38,11 @@ func platformTemps(_ context.Context) []Sensor {
 		if t <= 0 || t > 120 {     //nolint:mnd // sane physical bounds, as on windows
 			continue
 		}
-		out = append(out, Sensor{Name: hwmonTempName(in), TempC: t})
+		name := hwmonTempName(in)
+		if !sensorRelevant(name) { // NVMe/drive sensors ("Composite") are not CPU
+			continue
+		}
+		out = append(out, Sensor{Name: name, TempC: t})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out

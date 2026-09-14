@@ -12,7 +12,9 @@ import (
 
 // TestPlatformTempsHwmon drives the hwmon decoder against a synthetic
 // sysfs tree: millidegree conversion, the (0,120]°C plausibility
-// window, label-preferred naming and the chip-name fallback.
+// window, label-preferred naming, the chip-name fallback, and the
+// CPU-relevance filter that keeps drive sensors like an NVME
+// "Composite" out of the CPU temperature list.
 func TestPlatformTempsHwmon(t *testing.T) {
 	root := t.TempDir()
 	write := func(rel, content string) {
@@ -39,6 +41,9 @@ func TestPlatformTempsHwmon(t *testing.T) {
 	write("hwmon2/temp2_input", "0\n")      // missing
 	write("hwmon2/temp3_input", "150000\n") // 150°C, over the window
 	write("hwmon2/temp4_input", "garbage\n")
+	// in-bounds but not CPU: NVMe drives label their sensor "Composite"
+	write("hwmon2/temp5_input", "41000\n") // 41.0°C
+	write("hwmon2/temp5_label", "Composite\n")
 
 	orig := hwmonRoot
 	hwmonRoot = root
