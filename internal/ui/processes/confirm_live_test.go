@@ -2,6 +2,7 @@ package processes
 
 import (
 	"os/exec"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -15,7 +16,14 @@ import (
 // the kill confirmation. The child is reaped by Wait regardless of how
 // it terminates.
 func TestConfirmSendsRealSignal(t *testing.T) {
-	cmd := exec.Command("sleep", "30")
+	// Long-lived child on every platform: Windows ships no sleep binary,
+	// where ping -n <count> plays the same role.
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		cmd = exec.Command("ping", "-n", "30", "127.0.0.1")
+	} else {
+		cmd = exec.Command("sleep", "30")
+	}
 	if err := cmd.Start(); err != nil {
 		t.Skipf("cannot spawn a child process: %v", err)
 	}
