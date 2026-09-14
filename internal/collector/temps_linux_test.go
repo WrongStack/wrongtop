@@ -44,18 +44,24 @@ func TestPlatformTempsHwmon(t *testing.T) {
 	// in-bounds but not CPU: NVMe drives label their sensor "Composite"
 	write("hwmon2/temp5_input", "41000\n") // 41.0°C
 	write("hwmon2/temp5_label", "Composite\n")
+	// k10temp labels its sensor Tctl on AMD — matched via the sensorHints
+	// entry, not the label text alone
+	write("hwmon3/name", "k10temp\n")
+	write("hwmon3/temp1_input", "77000\n") // 77.0°C
+	write("hwmon3/temp1_label", "Tctl\n")
 
 	orig := hwmonRoot
 	hwmonRoot = root
 	t.Cleanup(func() { hwmonRoot = orig })
 
 	temps := platformTemps(context.Background())
-	if len(temps) != 3 {
-		t.Fatalf("got %+v, want 3 sensors", temps)
+	if len(temps) != 4 {
+		t.Fatalf("got %+v, want 4 sensors", temps)
 	}
 	want := map[string]float64{
 		"Core 0":        45,
 		"Package id 0":  52,
+		"Tctl":          77,
 		"k10temp temp1": 61.437,
 	}
 	for _, s := range temps {

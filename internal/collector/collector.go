@@ -202,8 +202,8 @@ func collectCPU(ctx context.Context) CPU {
 var platformTempsFn = platformTemps
 
 // sensorHints match CPU-relevant sensor names across vendors (coretemp,
-// k10temp, cpu_thermal, packageid, acpi, soc dts, ...).
-var sensorHints = []string{"cpu", "core", "thermal", "package", "k10temp", "acpi", "soc"}
+// k10temp/Tctl/Tdie, cpu_thermal, packageid, acpi, soc dts, ...).
+var sensorHints = []string{"cpu", "core", "thermal", "package", "k10temp", "acpi", "soc", "tctl", "tdie"}
 
 // sensorRelevant reports whether a sensor name matches a CPU hint.
 func sensorRelevant(name string) bool {
