@@ -15,9 +15,30 @@ make lint           # golangci-lint (falls back to vet)
 make cross          # local cross-compile smoke build into dist/
 ```
 
+The Makefile targets are unix-only (`$(shell …)`, `rm -rf`, `./binary`).
+On Windows, drive the same gates with go directly:
+
+```sh
+go build ./...       # compile everything
+go test -race ./...  # the real gate; CI runs it on all three platforms
+go vet ./...
+```
+
 On macOS build with CGO enabled (the default) — it links IOKit for
 AppleSMC temperatures, fans and battery. `CGO_ENABLED=0` builds run
 everywhere but skip those sensors.
+
+The `*_linux.go` and `*_windows.go` collectors sit behind build tags,
+so your own host never typechecks the other platforms' code. After
+touching one, cross-check that GOOS compiles before pushing:
+
+```sh
+GOOS=linux go build ./... && GOOS=linux go vet ./...   # after *_linux.go edits
+GOOS=windows go vet ./...                              # after *_windows.go edits
+```
+
+CI runs the same checks on all three platforms; the local cross-check
+just catches tag mistakes before they go red on `main`.
 
 ## Code conventions
 
