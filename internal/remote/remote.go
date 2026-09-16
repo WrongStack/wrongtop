@@ -180,16 +180,20 @@ func sanitizeSnapshot(s *collector.Snapshot) {
 }
 
 // sanitizeString removes the bytes that introduce terminal escape
-// sequences: ESC (0x1b) starts CSI/OSC/DCS, and the C1 CSI (U+009B)
-// does the same on terminals that accept 8-bit controls. The needle
-// must encode U+009B as valid UTF-8: a bare 0x9b byte is invalid UTF-8
-// and invisible to ContainsAny (staticcheck SA1011).
+// sequences: ESC (0x1b) starts CSI/OSC/DCS, and on terminals that
+// accept 8-bit controls the C1 string initiators do the same — DCS
+// (U+0090), SOS (U+0098), CSI (U+009B), OSC (U+009D), PM (U+009E) and
+// APC (U+009F). The needle must encode the C1 forms as valid UTF-8: a
+// bare 0x9b byte is invalid UTF-8 and invisible to ContainsAny
+// (staticcheck SA1011).
 func sanitizeString(s string) string {
-	if !strings.ContainsAny(s, "\x1b\u009b") {
+	const initiators = "\x1b\u0090\u0098\u009b\u009d\u009e\u009f"
+	if !strings.ContainsAny(s, initiators) {
 		return s
 	}
 	return strings.Map(func(r rune) rune {
-		if r == 0x1b || r == 0x9b {
+		switch r {
+		case 0x1b, 0x90, 0x98, 0x9b, 0x9d, 0x9e, 0x9f:
 			return -1
 		}
 		return r

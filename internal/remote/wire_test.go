@@ -168,7 +168,8 @@ func TestNextSanitizesEscapeSequences(t *testing.T) {
 		Time: time.Now(),
 		Host: collector.Host{
 			Hostname: "\x1b]0;pwned\x07\x1b[?1049l",
-			OS:       "\u009b5n", // C1 CSI as valid UTF-8, the JSON-realistic form
+			OS:       "\u009b5n",                  // C1 CSI as valid UTF-8, the JSON-realistic form
+			Kernel:   "\u009d0;pwned-title\u0007", // C1 OSC: title writes, not just CSI
 			Platform: "debian 12",
 		},
 		Procs: []collector.Proc{{
@@ -210,8 +211,11 @@ func TestNextSanitizesEscapeSequences(t *testing.T) {
 		t.Fatalf("Next: %v", err)
 	}
 
-	if rendered := fmt.Sprintf("%+v", snap); strings.ContainsAny(rendered, "\x1b\u009b") {
+	if rendered := fmt.Sprintf("%+v", snap); strings.ContainsAny(rendered, "\x1b\u0090\u0098\u009b\u009d\u009e\u009f") {
 		t.Fatalf("decoded snapshot carries escape initiators from the wire: %q", rendered)
+	}
+	if !strings.Contains(snap.Host.Kernel, "pwned-title") {
+		t.Errorf("kernel content lost in sanitization: %q", snap.Host.Kernel)
 	}
 	if !strings.Contains(snap.Host.Hostname, "pwned") {
 		t.Errorf("hostname content lost in sanitization: %q", snap.Host.Hostname)
