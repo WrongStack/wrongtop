@@ -174,20 +174,23 @@ func (c *Config) normalize() {
 	if c.Thresholds.TempWarn <= 0 {
 		c.Thresholds.TempWarn = 60
 	}
+	// crit falls back to the documented default, raised above warn when
+	// warn already sits at or above it — normalize must never emit
+	// crit <= warn (every consumer checks crit before warn).
 	if c.Thresholds.TempCrit <= c.Thresholds.TempWarn {
-		c.Thresholds.TempCrit = 80
+		c.Thresholds.TempCrit = max(80, c.Thresholds.TempWarn+1)
 	}
 	if c.Thresholds.CPUWarn <= 0 {
 		c.Thresholds.CPUWarn = 70
 	}
 	if c.Thresholds.CPUCrit <= c.Thresholds.CPUWarn {
-		c.Thresholds.CPUCrit = 90
+		c.Thresholds.CPUCrit = max(90, c.Thresholds.CPUWarn+1)
 	}
 	if c.Thresholds.MemWarn <= 0 {
 		c.Thresholds.MemWarn = 80
 	}
 	if c.Thresholds.MemCrit <= c.Thresholds.MemWarn {
-		c.Thresholds.MemCrit = 95
+		c.Thresholds.MemCrit = max(95, c.Thresholds.MemWarn+1)
 	}
 	if !validKeyOverride(c.Keys.Kill) {
 		c.Keys.Kill = "k"

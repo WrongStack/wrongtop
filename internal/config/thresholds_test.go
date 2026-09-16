@@ -43,6 +43,11 @@ func TestNormalizeInvalidPercentThresholds(t *testing.T) {
 			want: Thresholds{CPUWarn: 85, CPUCrit: 90, MemWarn: 90, MemCrit: 95, TempWarn: 60, TempCrit: 80},
 		},
 		{
+			name: "warn at or above the default constant still keeps crit above warn",
+			yaml: "thresholds:\n  cpu_warn: 95\n  cpu_crit: 92\n  mem_warn: 96\n  mem_crit: 93\n",
+			want: Thresholds{CPUWarn: 95, CPUCrit: 96, MemWarn: 96, MemCrit: 97, TempWarn: 60, TempCrit: 80},
+		},
+		{
 			name: "valid pairs pass through unchanged",
 			yaml: "thresholds:\n  cpu_warn: 55\n  cpu_crit: 66\n  mem_warn: 77\n  mem_crit: 88\n",
 			want: Thresholds{CPUWarn: 55, CPUCrit: 66, MemWarn: 77, MemCrit: 88, TempWarn: 60, TempCrit: 80},

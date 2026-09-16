@@ -89,6 +89,7 @@ func TestTempThresholdValidation(t *testing.T) {
 		{"defaults kept", 60, 80, 60, 80},
 		{"zero warn falls back", 0, 80, 60, 80},
 		{"crit below warn falls back", 70, 65, 70, 80},
+		{"warn at the default crit keeps crit above warn", 90, 85, 90, 91},
 		{"custom values kept", 55, 75, 55, 75},
 	}
 	for _, tc := range cases {
