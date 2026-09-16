@@ -272,9 +272,7 @@ func (m *Model) buildView() string {
 			ui.BorderFor(m.cfg.Border))
 	}
 
-	rows := make([]string, 0, len(m.stackedRows()))
-	rows = append(rows, m.stackedRows()...)
-	return strings.Join(rows, "\n")
+	return strings.Join(m.stackedRows(), "\n")
 }
 
 // gridPanels lays out the connected frame: HOST|CPU, MEMORY|NETWORK|DISKS

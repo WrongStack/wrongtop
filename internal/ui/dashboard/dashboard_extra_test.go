@@ -325,3 +325,47 @@ func richSnapshot() collector.Snapshot {
 	snap.Fans = []collector.Fan{{Name: "CPU", RPM: 1200}, {Name: "GPU", RPM: 940}}
 	return snap
 }
+
+// TestBuildViewRendersStackedRowsOnce pins the one-render contract of
+// the stacked/narrow rebuild path: buildView must call stackedRows
+// exactly once. Allocation counts are deterministic for a fixed render
+// path, so the test compares buildView against the call-once shape: a
+// double render lands at ~2x the allocations (the 2026-09-16 perf
+// commit briefly rendered every panel twice to size its row slice).
+func TestBuildViewRendersStackedRowsOnce(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		w, h int
+	}{
+		{"stacked", 100, 40},
+		{"narrow", 60, 24},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config.Default()
+			m := New(cfg, theme.ByName(cfg.Theme))
+			m.SetSize(tc.w, tc.h)
+			if m.class() == layoutGrid {
+				t.Fatalf("%dx%d is the grid layout; this test pins the stacked/narrow rebuild path", tc.w, tc.h)
+			}
+			m.Update(collector.SnapshotMsg{Snap: fakeSnapshot()})
+			m.View() // prime the lazy canvas style/bar caches
+
+			reference := func() string { return strings.Join(m.stackedRows(), "\n") }
+			reference()
+			m.viewCache = ""
+			m.buildView()
+
+			build := testing.AllocsPerRun(30, func() { m.viewCache = ""; _ = m.buildView() })
+			ref := testing.AllocsPerRun(30, func() { _ = reference() })
+			// generous 25%+4 slack above the reference; a double render
+			// lands at ~2x and cannot slip under it
+			if build > ref+ref/4+4 {
+				t.Errorf("buildView allocates %.0f/op vs %.0f/op for the call-once reference (ratio %.2f): stackedRows rendered more than once", build, ref, build/ref)
+			}
+			m.viewCache = ""
+			if got := m.buildView(); got != reference() {
+				t.Errorf("buildView output differs from the call-once reference")
+			}
+		})
+	}
+}
