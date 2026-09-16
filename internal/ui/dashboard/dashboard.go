@@ -272,7 +272,7 @@ func (m *Model) buildView() string {
 			ui.BorderFor(m.cfg.Border))
 	}
 
-	var rows []string
+	rows := make([]string, 0, len(m.stackedRows()))
 	rows = append(rows, m.stackedRows()...)
 	return strings.Join(rows, "\n")
 }

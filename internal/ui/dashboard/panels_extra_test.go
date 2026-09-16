@@ -510,7 +510,8 @@ func TestEvaluateAlertsThresholds(t *testing.T) {
 	if al[4].Crit {
 		t.Errorf("the lone warning should trail: %+v", al)
 	}
-	var critKeys, allTexts []string
+	critKeys := make([]string, 0, len(al))
+	allTexts := make([]string, 0, len(al))
 	for _, a := range al {
 		allTexts = append(allTexts, a.Text)
 		if a.Crit {

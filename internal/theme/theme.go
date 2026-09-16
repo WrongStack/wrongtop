@@ -302,7 +302,7 @@ func userRegistry() map[string]Palette {
 func Names() []string {
 	names := PaletteNames()
 	user := userRegistry()
-	var extra []string
+	extra := make([]string, 0, len(user))
 	for name := range user {
 		extra = append(extra, name)
 	}

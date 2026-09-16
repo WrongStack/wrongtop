@@ -148,7 +148,7 @@ func (m *Model) build(withGraphs bool) string {
 		rows = append(rows, m.section("sensor", "TEMPERATURES", body), "")
 	}
 	if len(m.snap.Fans) > 0 {
-		var body []string
+		body := make([]string, 0, len(m.snap.Fans))
 		for i, f := range m.snap.Fans {
 			body = append(body, m.fanRow(f, i))
 		}

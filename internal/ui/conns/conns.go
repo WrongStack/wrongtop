@@ -132,19 +132,19 @@ func (m *Model) syncPIDNames(procs []collector.Proc) {
 		next[p.PID] = p.Name
 	}
 	m.pidName = next
-	any := false
+	hasPID := false
 	for _, c := range m.conns {
 		if c.PID > 0 {
-			any = true
+			hasPID = true
 			break
 		}
 	}
-	if any != m.anyPID {
-		m.anyPID = any
+	if hasPID != m.anyPID {
+		m.anyPID = hasPID
 		// the table re-renders on both calls and indexes row cells by
 		// column count, so the rows must be empty across the transition
 		m.table.SetRows(nil)
-		m.table.SetColumns(columns(m.width, any))
+		m.table.SetColumns(columns(m.width, hasPID))
 		m.rebuild()
 	}
 }

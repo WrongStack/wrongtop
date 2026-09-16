@@ -266,7 +266,7 @@ func TestGridPanelsShortGrid(t *testing.T) {
 	m.Update(collector.SnapshotMsg{Snap: snap})
 
 	panels := m.gridPanels(15) // c lands below the process panel's floor
-	var titles []string
+	titles := make([]string, 0, len(panels))
 	height := 0
 	for _, p := range panels {
 		titles = append(titles, p.Title)

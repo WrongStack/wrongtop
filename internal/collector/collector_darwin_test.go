@@ -41,7 +41,7 @@ func TestCountUsersFromUtmpx(t *testing.T) {
 		b[utmpxTypeOffset+1] = byte(typ >> 8)
 		return b
 	}
-	var raw []byte
+	raw := make([]byte, 0, 4*utmpxRecordSize)
 	raw = append(raw, rec(utmpxUserProcess, "ali")...)
 	raw = append(raw, rec(utmpxUserProcess, "ali")...) // duplicate: one user
 	raw = append(raw, rec(utmpxUserProcess, "")...)    // empty name: ignored
