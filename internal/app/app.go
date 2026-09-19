@@ -440,6 +440,13 @@ func (m *Model) reloadConfig() {
 		reloaded.ReadOnly = true
 	}
 	*m.cfg = *reloaded // tabs share the pointer; in-place swap updates all
+	// Theme is hot-reloadable (README) and themes include user palette
+	// files — re-read them so an edited, added or deleted palette file
+	// applies on reload instead of resolving against the startup
+	// snapshot. A broken themes dir must not abort the reload; the
+	// registry keeps its previous content (same ignore-on-error stance
+	// as the lazy startup load).
+	_ = theme.LoadUserThemes(theme.ThemesDir())
 	th := theme.ByName(m.cfg.Theme)
 	m.theme = th
 	for _, t := range m.tabs {
