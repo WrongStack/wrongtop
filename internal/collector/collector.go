@@ -230,6 +230,12 @@ func collectSensors(ctx context.Context) []Sensor {
 	return out[:min(len(out), 4)]
 }
 
+// minPlausibleMHz is the floor below which a reported clock is treated as
+// unreported. gopsutil reads Apple Silicon clocks from the pmgr voltage
+// table and assumes Hz; M4-class chips store kHz there, so a 4.5GHz core
+// comes back as "4MHz". No real core runs anywhere near this floor.
+const minPlausibleMHz = 200
+
 // collectFreq returns the average current CPU clock in MHz, or 0 when the
 // platform does not expose per-core frequencies.
 func collectFreq(ctx context.Context) float64 {
@@ -237,10 +243,16 @@ func collectFreq(ctx context.Context) float64 {
 	if err != nil {
 		return 0
 	}
+	return averageMHz(infos)
+}
+
+// averageMHz averages the plausible clocks in infos, or returns 0 when
+// none is plausible.
+func averageMHz(infos []cpu.InfoStat) float64 {
 	var sum float64
 	var n int
 	for _, in := range infos {
-		if in.Mhz > 0 {
+		if in.Mhz >= minPlausibleMHz {
 			sum += in.Mhz
 			n++
 		}
