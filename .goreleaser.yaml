@@ -90,7 +90,11 @@ homebrew_casks:
   - repository:
       owner: wrongstack
       name: homebrew-tap
-      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+      token: '{{ envOrDefault "HOMEBREW_TAP_TOKEN" "" }}'
+    # the release workflow blanks the token when it is missing or rejected
+    # by GitHub, so a stale PAT skips the tap push instead of failing a
+    # release whose archives already went out
+    skip_upload: '{{ if eq (envOrDefault "HOMEBREW_TAP_TOKEN" "") "" }}true{{ else }}false{{ end }}'
     # pushes the regenerated cask to wrongstack/homebrew-tap via the
     # HOMEBREW_TAP_TOKEN secret (fine-grained PAT: only the tap repo,
     # Contents: Read and write). Setup + validation checklist lives in

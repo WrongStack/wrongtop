@@ -24,6 +24,21 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # a missing or expired tap PAT must not fail the release: probe it
+      # first and hand goreleaser an empty token (skip_upload) if rejected
+      - name: Check Homebrew tap token
+        id: tap
+        env:
+          TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -n "$TOKEN" ] && curl -fsS -o /dev/null \
+              -H "Authorization: Bearer $TOKEN" \
+              https://api.github.com/repos/wrongstack/homebrew-tap; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::HOMEBREW_TAP_TOKEN is missing or rejected; the cask will not be pushed to wrongstack/homebrew-tap"
+          fi
+
       - name: Run goreleaser
         uses: goreleaser/goreleaser-action@v6
         with:
@@ -32,6 +47,5 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # only used when brews.skip_upload flips to false; empty until
-          # the HOMEBREW_TAP_TOKEN secret exists, which is fine
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          # empty unless the probe above accepted it; empty skips the tap push
+          HOMEBREW_TAP_TOKEN: ${{ steps.tap.outputs.ok == 'true' && secrets.HOMEBREW_TAP_TOKEN || '' }}
