@@ -24,6 +24,18 @@ func countOpenFDs(t *testing.T) int {
 	return 0
 }
 
+// capToRlimit clamps want to the rlimit value cur. Rlimit fields are
+// uint64 on Linux and Darwin but int64 on the BSDs, so both are generic.
+func capToRlimit[T ~int64 | ~uint64](cur T, want int) int {
+	if want > 0 && T(want) > cur {
+		return int(cur)
+	}
+	return want
+}
+
+// asRlimit converts v to the platform's rlimit field type.
+func asRlimit[T ~int64 | ~uint64](_ T, v int) T { return T(v) }
+
 // awaitServeAttemptEnd waits for Serve to return at the end of a
 // rejected attempt. With the descriptor table deliberately full, a
 // cancelled Serve may surface the in-flight accept's EMFILE ("accept:
@@ -54,14 +66,12 @@ func TestServeAcceptError(t *testing.T) {
 	}
 	used := countOpenFDs(t)
 	target := used + 48
-	if uint64(target) > orig.Cur {
-		target = int(orig.Cur)
-	}
+	target = capToRlimit(orig.Cur, target)
 	if target < used+4 {
 		t.Skipf("no fd headroom (limit %d, used %d)", orig.Cur, used)
 	}
 	rl := orig // Max stays untouched so the restore needs no privileges
-	rl.Cur = uint64(target)
+	rl.Cur = asRlimit(rl.Cur, target)
 	if err := syscall.Setrlimit(syscall.RLIMIT_NOFILE, &rl); err != nil {
 		t.Skipf("setrlimit: %v", err)
 	}
