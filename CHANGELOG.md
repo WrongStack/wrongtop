@@ -4,6 +4,18 @@ All notable changes to WrongTop are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org).
 
+## [2.0.5] - 2026-10-07
+
+### Added
+- `wrongtop --version` / `-v`, matching the `version` subcommand
+
+### Fixed
+- Apple M4-class Macs no longer report a bogus `freq_mhz: 4` in `dump`
+  and `serve` output; implausible clocks are treated as unreported
+- The test suite builds on FreeBSD and the other BSDs
+- A missing or expired Homebrew tap token no longer fails the release
+  workflow after the archives are already published
+
 ## [2.0.2] - 2026-09-12
 
 ### Added
