@@ -91,6 +91,12 @@ func TestVersionAndSampleCommands(t *testing.T) {
 	if err != nil || !strings.Contains(out, "wrongtop "+version) {
 		t.Fatalf("version: err=%v out=%q", err, out)
 	}
+	for _, flag := range []string{"--version", "-v"} {
+		flagOut, err := execute(t, context.Background(), flag)
+		if err != nil || flagOut != out {
+			t.Fatalf("%s: err=%v out=%q, want %q", flag, err, flagOut, out)
+		}
+	}
 	out, err = execute(t, context.Background(), "config-sample")
 	if err != nil || out != config.Sample {
 		t.Fatalf("config-sample: err=%v, output differs from config.Sample", err)

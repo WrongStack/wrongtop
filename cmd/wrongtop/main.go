@@ -54,6 +54,8 @@ func newRootCmd() *cobra.Command {
 		Short:        "A cross-platform terminal system monitor",
 		Long:         "WrongTop is a terminal system monitor for macOS, Linux and Windows.\nIt watches CPU, memory, processes, disks, network and Docker containers.",
 		SilenceUsage: true,
+		// --version / -v mirror the version subcommand's output
+		Version: version,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			path := resolveConfigPath(cmd)
 			cfg, err := config.Load(path)
@@ -63,6 +65,7 @@ func newRootCmd() *cobra.Command {
 			return runApp(cfg, path, version)
 		},
 	}
+	root.SetVersionTemplate("wrongtop {{.Version}}\n")
 
 	// persistent so serve/connect/dump inherit it too
 	root.PersistentFlags().StringP("config", "c", "",
